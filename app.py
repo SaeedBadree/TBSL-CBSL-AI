@@ -847,7 +847,8 @@ def api_chat():
 
 @app.route("/buildadvisor")
 def buildadvisor():
-    return render_template("buildadvisor.html")
+    # Note: Template filename has a capital 'A' on disk; Linux/Docker is case-sensitive
+    return render_template("buildAdvisor.html")
 
 # --------------------------
 # BOM extraction from uploads (Vision)

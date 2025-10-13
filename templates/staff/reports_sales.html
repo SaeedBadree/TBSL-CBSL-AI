@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block title %}Sales Report | Conserv{% endblock %}
+
+{% block content %}
+<section class="card" style="padding:16px;">
+  <header class="toolbar">
+    <h2>Sales Report</h2>
+    <form method="get" action="">
+      <label>From <input type="date" name="from" value="{{ from_date or '' }}"/></label>
+      <label>To <input type="date" name="to" value="{{ to_date or '' }}"/></label>
+      <button class="btn" type="submit">Filter</button>
+      <a class="btn" href="?format=csv{% if from_date %}&from={{ from_date }}{% endif %}{% if to_date %}&to={{ to_date }}{% endif %}">Export CSV</a>
+    </form>
+  </header>
+
+  <div class="table-wrap" style="margin-top:12px;">
+    <table class="report-table" id="tbl-sales">
+      <thead>
+        <tr><th data-type="text">Product</th><th class="numeric" data-type="number">Qty (yd³)</th><th class="numeric" data-type="number">Revenue</th><th class="numeric" data-type="number">Avg Price</th></tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+          <tr>
+            <td>{{ r.product }}</td>
+            <td class="numeric">{{ '%.3f' % r.qty_yd3 }}</td>
+            <td class="numeric">${{ '%.2f' % r.revenue }}</td>
+            <td class="numeric">${{ '%.2f' % r.avg_price }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="4" style="text-align:center;">No data for selection.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <script>
+    (function(){
+      function sortTable(tblId, th){
+        const tbody = document.querySelector('#'+tblId+' tbody'); if(!tbody) return;
+        const type = th.getAttribute('data-type')||'text';
+        const idx = Array.from(th.parentNode.children).indexOf(th);
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+        const dir = th.getAttribute('data-dir')==='asc' ? 'desc' : 'asc';
+        rows.sort((a,b)=>{
+          const A = a.children[idx].innerText.replace(/[$,]/g,'');
+          const B = b.children[idx].innerText.replace(/[$,]/g,'');
+          if(type==='number') return (parseFloat(A)||0)-(parseFloat(B)||0);
+          return A.localeCompare(B);
+        });
+        if(dir==='desc') rows.reverse();
+        tbody.innerHTML=''; rows.forEach(r=>tbody.appendChild(r));
+        th.setAttribute('data-dir', dir);
+      }
+      document.addEventListener('DOMContentLoaded', function(){
+        document.querySelectorAll('#tbl-sales thead th').forEach(th=>{
+          th.addEventListener('click', ()=>sortTable('tbl-sales', th));
+        });
+      });
+    })();
+  </script>
+</section>
+{% endblock %}
+
+

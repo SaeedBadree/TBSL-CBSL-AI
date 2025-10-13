@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block title %}New Expense | Conserv{% endblock %}
+
+{% block content %}
+<section class="card" style="padding:16px; max-width:640px;">
+  <h2>New Expense</h2>
+  <div class="card" style="padding:12px; display:grid; gap:10px;">
+    <label>Date <input id="exp-date" type="date"></label>
+    <label>Category
+      <select id="exp-category">
+        <option value="salaries">Salaries</option>
+        <option value="fuel">Fuel</option>
+        <option value="maintenance">Maintenance</option>
+        <option value="other">Other</option>
+      </select>
+    </label>
+    <label>Description <input id="exp-desc" type="text" placeholder="Optional"></label>
+    <label>Amount <input id="exp-amount" type="number" step="0.01"></label>
+    <div class="card" style="padding:10px;">
+      <h3>AI Assist</h3>
+      <div style="display:grid; gap:8px;">
+        <div>
+          <input id="exp-files" type="file" multiple accept=".png,.jpg,.jpeg,.webp,.gif,.pdf"/>
+          <button id="btn-exp-upload" class="btn" type="button" style="margin-left:8px;">Upload</button>
+          <button id="btn-exp-extract" class="btn" type="button" style="margin-left:8px;">AI Extract</button>
+          <div id="exp-uploaded" style="margin-top:6px; font-size:.9rem;"></div>
+        </div>
+        <div>
+          <textarea id="exp-ai-text" rows="3" placeholder="e.g., Salaries 15000; Fuel 1200; Maintenance 800"></textarea>
+          <button id="btn-exp-parse-text" class="btn" type="button" style="margin-top:6px;">Parse Text with AI</button>
+        </div>
+      </div>
+    </div>
+    <button id="btn-exp-save" class="btn">Save</button>
+  </div>
+</section>
+{% endblock %}
+
+{% block page_scripts %}
+<script src="/static/staff_expenses.js?v={{ ts }}"></script>
+{% endblock %}
+
+

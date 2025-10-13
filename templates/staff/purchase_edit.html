@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+
+{% block title %}New Purchase | Conserv{% endblock %}
+
+{% block content %}
+<section class="card" style="padding:16px; display:grid; gap:14px;">
+  <header style="display:flex;justify-content:space-between;align-items:center;gap:12px;">
+    <h2>New Supplier Purchase</h2>
+    <div>
+      <button id="btn-save" class="btn">Save Draft</button>
+    </div>
+  </header>
+
+  <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px;">
+    <div class="card" style="padding:12px;">
+      <h3>Supplier & Invoice</h3>
+      <label>Supplier Name <input id="supplier_name" type="text" placeholder="e.g., ABC Aggregates"/></label>
+      <label>Invoice # <input id="invoice_number" type="text"/></label>
+      <label>Date <input id="invoice_date" type="date"/></label>
+    </div>
+
+    <div class="card" style="padding:12px;">
+      <h3>Upload Bill</h3>
+      <input id="files" type="file" multiple accept=".png,.jpg,.jpeg,.webp,.gif,.pdf"/>
+      <button id="btn-upload" class="btn" style="margin-top:8px;">Upload</button>
+      <div id="uploaded" style="margin-top:8px; font-size:.9rem;"></div>
+      <button id="btn-extract" class="btn" style="margin-top:8px;">AI Extract</button>
+    </div>
+
+    <div class="card" style="padding:12px;">
+      <h3>AI Text Assist</h3>
+      <textarea id="ai_text" rows="4" placeholder="e.g., Bought 3 yd sand from ABC at 210/yd"></textarea>
+      <button id="btn-parse-text" class="btn" style="margin-top:8px;">Parse with AI</button>
+    </div>
+  </div>
+
+  <div class="card" style="padding:12px;">
+    <h3>Line Items</h3>
+    <table id="lines" class="table" style="width:100%;">
+      <thead>
+        <tr>
+          <th>Description</th>
+          <th>Unit</th>
+          <th>Qty</th>
+          <th>Unit Price</th>
+          <th>Line Total</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody contenteditable="false"></tbody>
+    </table>
+    <button id="btn-add-line" class="btn">Add Line</button>
+    <div style="display:flex; justify-content:flex-end; gap:20px; margin-top:10px;">
+      <div><strong>Subtotal:</strong> $<span id="subtotal">0.00</span></div>
+      <div><strong>Tax:</strong> $<input id="tax" type="number" step="0.01" value="0" style="width:120px;"/></div>
+      <div><strong>Total:</strong> $<span id="total">0.00</span></div>
+    </div>
+  </div>
+
+  <script>
+    // Preload invoice into form if provided by server
+    window.__INVOICE__ = {{ (invoice or {}) | tojson }};
+  </script>
+</section>
+{% endblock %}
+
+{% block page_scripts %}
+<script src="/static/staff_purchases.js?v={{ ts }}"></script>
+{% endblock %}
+
+

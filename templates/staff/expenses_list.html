@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+
+{% block title %}Expenses | Conserv{% endblock %}
+
+{% block content %}
+<section class="card" style="padding:16px;">
+  <header class="toolbar">
+    <h2>Expenses</h2>
+    <form method="get" action="">
+      <label>From <input type="date" name="from" value="{{ from_date or '' }}"/></label>
+      <label>To <input type="date" name="to" value="{{ to_date or '' }}"/></label>
+      <label>Category
+        <select name="category">
+          <option value="">All</option>
+          <option value="salaries" {% if category=='salaries' %}selected{% endif %}>Salaries</option>
+          <option value="fuel" {% if category=='fuel' %}selected{% endif %}>Fuel</option>
+          <option value="maintenance" {% if category=='maintenance' %}selected{% endif %}>Maintenance</option>
+          <option value="other" {% if category=='other' %}selected{% endif %}>Other</option>
+        </select>
+      </label>
+      <button class="btn" type="submit">Filter</button>
+      <a class="btn" href="?format=csv{% if from_date %}&from={{ from_date }}{% endif %}{% if to_date %}&to={{ to_date }}{% endif %}{% if category %}&category={{ category }}{% endif %}">Export CSV</a>
+      <a class="btn" href="{{ url_for('staff_expense_new') }}">New Expense</a>
+    </form>
+  </header>
+
+  <div class="table-wrap" style="margin-top:12px;">
+    <table class="report-table" id="tbl-expenses">
+      <thead>
+        <tr><th data-type="date">Date</th><th data-type="text">Category</th><th data-type="text">Description</th><th class="numeric" data-type="number">Amount</th></tr>
+      </thead>
+      <tbody>
+        {% for e in rows %}
+          <tr>
+            <td>{{ e.date or (e.date_dt.isoformat() if e.date_dt) }}</td>
+            <td>{{ e.category }}</td>
+            <td>{{ e.description }}</td>
+            <td class="numeric">${{ '%.2f' % (e.amount or 0) }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="4" style="text-align:center;">No expenses.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <script>
+    (function(){
+      function sortTable(tblId, th){
+        const tbody = document.querySelector('#'+tblId+' tbody'); if(!tbody) return;
+        const type = th.getAttribute('data-type')||'text';
+        const idx = Array.from(th.parentNode.children).indexOf(th);
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+        const dir = th.getAttribute('data-dir')==='asc' ? 'desc' : 'asc';
+        rows.sort((a,b)=>{
+          let A = a.children[idx].innerText, B = b.children[idx].innerText;
+          if(type==='number'){ A=A.replace(/[$,]/g,''); B=B.replace(/[$,]/g,''); return (parseFloat(A)||0)-(parseFloat(B)||0); }
+          return A.localeCompare(B);
+        });
+        if(dir==='desc') rows.reverse();
+        tbody.innerHTML=''; rows.forEach(r=>tbody.appendChild(r));
+        th.setAttribute('data-dir', dir);
+      }
+      document.addEventListener('DOMContentLoaded', function(){
+        document.querySelectorAll('#tbl-expenses thead th').forEach(th=>{
+          th.addEventListener('click', ()=>sortTable('tbl-expenses', th));
+        });
+      });
+    })();
+  </script>
+</section>
+{% endblock %}
+
+

@@ -34,6 +34,9 @@ ALLOWED_KEYS: List[str] = [
 # Units we accept and will normalize to
 _ALLOWED_UNITS = {"m3", "m", "kg", "bag", "sheet", "pcs", "gal", "lb"}
 
+# Staff purchases/receipts also allow cubic yards
+_ALLOWED_UNITS_STAFF = {"yd3", "m3", "m", "kg", "bag", "sheet", "pcs", "gal", "lb"}
+
 def _make_client() -> Optional[OpenAI]:
     """Create an OpenAI client. Returns None if no API key is configured."""
     key = os.getenv("OPENAI_API_KEY")
@@ -130,6 +133,18 @@ def _norm_unit(u: str) -> str:
     if u in {"pound", "pounds"}:
         return "lb"
     return u
+
+def _norm_unit_staff(u: str) -> str:
+    """Normalize unit strings for staff purchases, including cubic yards."""
+    if not isinstance(u, str):
+        return ""
+    u = (u or "").strip().lower()
+    # yards synonyms
+    if u in {"yd", "yds", "yard", "yards", "yd^3", "yd³", "cubic yard", "cubic yards"}:
+        return "yd3"
+    # fall back to generic normalization
+    u2 = _norm_unit(u)
+    return u2
 
 def _validate_lines(raw: Any) -> List[Dict[str, Any]]:
     """Validate/clean AI-returned lines."""
@@ -387,4 +402,284 @@ def propose_bom_from_vision(file_paths: List[str], spec: dict) -> dict:
         return {"lines": cleaned, "notes": data.get("notes", "")}
     except Exception as e:
         log.exception("propose_bom_from_vision failed: %s", e)
+        return {}
+
+
+# --------------------------
+# Staff: Purchases (OCR + Text)
+# --------------------------
+
+def _validate_purchase_lines(raw: Any) -> List[Dict[str, Any]]:
+    """Validate and clean purchase lines for invoices/receipts.
+    Expected fields per line: description (str), unit (allowed), qty (float>0)
+    Optional: unit_price (float>=0), line_total (float>=0). If line_total missing, compute.
+    """
+    out: List[Dict[str, Any]] = []
+    if not isinstance(raw, list):
+        return out
+    for it in raw:
+        if not isinstance(it, dict):
+            continue
+        description = (it.get("description") or "").strip()
+        unit = _norm_unit_staff(it.get("unit", ""))
+        qty = it.get("qty")
+        try:
+            qty_f = float(qty)
+        except (TypeError, ValueError):
+            continue
+        if not description or unit not in _ALLOWED_UNITS_STAFF or qty_f <= 0:
+            continue
+        unit_price = it.get("unit_price")
+        line_total = it.get("line_total")
+        up_f: Optional[float] = None
+        lt_f: Optional[float] = None
+        try:
+            up_f = float(unit_price) if unit_price is not None else None
+        except (TypeError, ValueError):
+            up_f = None
+        try:
+            lt_f = float(line_total) if line_total is not None else None
+        except (TypeError, ValueError):
+            lt_f = None
+        if lt_f is None and up_f is not None:
+            lt_f = up_f * qty_f
+        out.append({
+            "description": description,
+            "unit": unit,
+            "qty": round(qty_f, 4),
+            **({"unit_price": round(up_f, 4)} if up_f is not None else {}),
+            **({"line_total": round(lt_f, 4)} if lt_f is not None else {}),
+            # Optional AI mapping to internal material key; keep if provided
+            **({"material_key": it.get("material_key")} if it.get("material_key") else {}),
+            **({"category": it.get("category")} if it.get("category") else {}),
+        })
+    return out
+
+
+def propose_purchase_from_text(text: str) -> dict:
+    """AI-assisted parse of free text describing a purchase.
+    Returns dict with: supplier_name?, invoice_date?, lines[], tax?, total?"""
+    client = _make_client()
+    if not client:
+        return {}
+
+    schema_hint = (
+        "Return ONLY a JSON object with keys: supplier_name?, invoice_date?, invoice_number?, "
+        "currency?, lines, tax?, total?.\n"
+        "lines is a list of items with fields: description (string), unit (one of yd3, m3, bag, kg, pcs, sheet, gal, lb), "
+        "qty (number>0), unit_price (optional number>=0), line_total (optional number>=0).\n"
+        "Prefer unit=yd3 for aggregates like sand or gravel if quantities in yards."
+    )
+
+    try:
+        resp = _chat_completion_with_fallback(
+            client,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": (
+                    "You are a helpful assistant for staff purchase entry. "
+                    + schema_hint
+                )},
+                {"role": "user", "content": text.strip()},
+            ],
+            timeout=60.0,
+            model_kind="text",
+        )
+        content = (resp.choices[0].message.content or "").strip()
+        data = json.loads(content)
+        lines = _validate_purchase_lines(data.get("lines"))
+        out = {
+            "supplier_name": (data.get("supplier_name") or "").strip() or None,
+            "invoice_date": (data.get("invoice_date") or "").strip() or None,
+            "invoice_number": (data.get("invoice_number") or "").strip() or None,
+            "currency": (data.get("currency") or "TTD").strip() or "TTD",
+            "lines": lines,
+        }
+        # Optional totals
+        try:
+            out["tax"] = float(data.get("tax"))
+        except (TypeError, ValueError):
+            pass
+        try:
+            out["total"] = float(data.get("total"))
+        except (TypeError, ValueError):
+            pass
+        return out
+    except Exception as e:
+        log.exception("propose_purchase_from_text failed: %s", e)
+        return {}
+
+
+def propose_invoice_from_vision(file_paths: List[str]) -> dict:
+    """Extract supplier invoice details from images/PDF using a vision-capable model.
+    Returns dict with supplier_name?, invoice_date?, invoice_number?, currency?, lines[], tax?, total?"""
+    client = _make_client()
+    if not client:
+        return {}
+
+    # Build content blocks with images (expand PDFs)
+    content: List[Dict[str, Any]] = [
+        {"type": "text", "text": (
+            "Extract supplier invoice data. "
+            "Return ONLY JSON with keys: supplier_name?, invoice_date?, invoice_number?, currency?, lines, tax?, total?. "
+            "Each line has: description, unit (yd3/m3/bag/kg/pcs/sheet/gal/lb), qty, unit_price?, line_total?."
+        )}
+    ]
+    expanded_images: List[str] = []
+    for p in (file_paths or []):
+        ext = os.path.splitext(p)[1].lower()
+        if ext == ".pdf":
+            expanded_images.extend(_pdf_to_images(p, max_pages=3))
+        else:
+            expanded_images.append(p)
+    for img_path in expanded_images:
+        data_url = _file_to_data_url(img_path)
+        if not data_url:
+            continue
+        content.append({"type": "image_url", "image_url": {"url": data_url}})
+
+    system = (
+        "You read supplier invoices for building materials. "
+        "Use yd3 for cubic yards when appropriate. "
+        "Respond strictly as JSON per instructions."
+    )
+
+    try:
+        resp = _chat_completion_with_fallback(
+            client,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": content},
+            ],
+            timeout=90.0,
+            model_kind="vision",
+        )
+        content_text = (resp.choices[0].message.content or "").strip()
+        data = json.loads(content_text)
+        lines = _validate_purchase_lines(data.get("lines"))
+        out = {
+            "supplier_name": (data.get("supplier_name") or "").strip() or None,
+            "invoice_date": (data.get("invoice_date") or "").strip() or None,
+            "invoice_number": (data.get("invoice_number") or "").strip() or None,
+            "currency": (data.get("currency") or "TTD").strip() or "TTD",
+            "lines": lines,
+        }
+        try:
+            out["tax"] = float(data.get("tax"))
+        except (TypeError, ValueError):
+            pass
+        try:
+            out["total"] = float(data.get("total"))
+        except (TypeError, ValueError):
+            pass
+        return out
+    except Exception as e:
+        log.exception("propose_invoice_from_vision failed: %s", e)
+        return {}
+
+
+# --------------------------
+# Expenses: Text and Vision extraction
+# --------------------------
+
+def _validate_expenses(raw: Any) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    if not isinstance(raw, list):
+        return out
+    for it in raw:
+        if not isinstance(it, dict):
+            continue
+        category = (it.get("category") or "").strip().lower()
+        description = (it.get("description") or "").strip()
+        try:
+            amount = float(it.get("amount") or 0)
+        except Exception:
+            amount = 0.0
+        if not category or amount <= 0:
+            continue
+        out.append({
+            "category": category,
+            "description": description,
+            "amount": round(amount, 2)
+        })
+    return out
+
+
+def propose_expenses_from_text(text: str) -> dict:
+    """Parse free text into expense entries. Returns { date?, expenses: [{category, description, amount}] }"""
+    client = _make_client()
+    if not client:
+        return {}
+    schema = (
+        "Return ONLY a JSON object with optional 'date' (YYYY-MM-DD) and 'expenses' list. "
+        "Each expense has: category (salaries|fuel|maintenance|other), description (string), amount (number>0)."
+    )
+    try:
+        resp = _chat_completion_with_fallback(
+            client,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": schema},
+                {"role": "user", "content": text.strip()},
+            ],
+            timeout=60.0,
+            model_kind="text",
+        )
+        content = (resp.choices[0].message.content or "").strip()
+        data = json.loads(content)
+        expenses = _validate_expenses(data.get("expenses"))
+        out = {"expenses": expenses}
+        d = (data.get("date") or "").strip()
+        if d:
+            out["date"] = d
+        return out
+    except Exception as e:
+        log.exception("propose_expenses_from_text failed: %s", e)
+        return {}
+
+
+def propose_expenses_from_vision(file_paths: List[str]) -> dict:
+    """Extract expenses from photos/PDF receipts. Returns { date?, expenses: [...] }"""
+    client = _make_client()
+    if not client:
+        return {}
+    content: List[Dict[str, Any]] = [{"type": "text", "text": (
+        "Extract company operating expenses from the attached images. "
+        "Return ONLY JSON with optional 'date' and 'expenses' list where each item has: "
+        "category (salaries|fuel|maintenance|other), description, amount (number>0)."
+    )}]
+    expanded_images: List[str] = []
+    for p in (file_paths or []):
+        ext = os.path.splitext(p)[1].lower()
+        if ext == ".pdf":
+            expanded_images.extend(_pdf_to_images(p, max_pages=3))
+        else:
+            expanded_images.append(p)
+    for img_path in expanded_images:
+        data_url = _file_to_data_url(img_path)
+        if not data_url:
+            continue
+        content.append({"type": "image_url", "image_url": {"url": data_url}})
+    try:
+        resp = _chat_completion_with_fallback(
+            client,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": "You extract expenses into strict JSON."},
+                {"role": "user", "content": content},
+            ],
+            timeout=90.0,
+            model_kind="vision",
+        )
+        content_text = (resp.choices[0].message.content or "").strip()
+        data = json.loads(content_text)
+        expenses = _validate_expenses(data.get("expenses"))
+        out = {"expenses": expenses}
+        d = (data.get("date") or "").strip()
+        if d:
+            out["date"] = d
+        return out
+    except Exception as e:
+        log.exception("propose_expenses_from_vision failed: %s", e)
         return {}

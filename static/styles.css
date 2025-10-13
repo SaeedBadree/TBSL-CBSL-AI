@@ -49,10 +49,11 @@ main{ max-width:1200px; margin:20px auto; padding:0 20px; }
   padding:10px 20px;
   display:flex; align-items:center; justify-content:space-between;
   box-shadow:0 2px 5px rgba(0,0,0,.2);
+  position:sticky; top:0; z-index:1000;
 }
 .nav-container{ display:flex; align-items:center; justify-content:space-between; width:100%; }
 .navbar .brand{ color:#fff; font-size:1.5rem; font-weight:800; text-decoration:none; margin-right:20px; white-space:nowrap;}
-.nav-links{ display:flex; gap:12px; align-items:center; }
+.nav-links{ display:flex; gap:12px; align-items:center; position:relative; }
 .nav-links a{
   color:#fff; font-weight:700; padding:8px 14px; border-radius:6px;
   transition:background-color .25s,color .25s;
@@ -60,6 +61,17 @@ main{ max-width:1200px; margin:20px auto; padding:0 20px; }
 .nav-links a:hover{ background:var(--accent); color:var(--primary); text-decoration:none; }
 .nav-links a.active{ background:var(--accent); color:var(--primary); }
 .menu-toggle{ display:none; color:#fff; font-size:1.6rem; cursor:pointer; }
+
+/* Dropdown */
+.dropdown{ position:relative; }
+.dropdown-toggle{ display:inline-flex; align-items:center; gap:6px; }
+.dropdown-menu{
+  position:absolute; top:100%; left:0; min-width:220px;
+  background:var(--primary); border:1px solid var(--primary-700); border-radius:10px; padding:8px; display:none;
+}
+.dropdown[aria-expanded="true"] .dropdown-menu{ display:block; }
+.dropdown-menu a{ display:block; padding:8px 10px; border-radius:8px; }
+.dropdown-menu a:hover{ background:rgba(255,255,255,.15); text-decoration:none; }
 
 @media (max-width:768px){
   .nav-links{
@@ -69,6 +81,20 @@ main{ max-width:1200px; margin:20px auto; padding:0 20px; }
   .nav-links.show{ display:flex; }
   .menu-toggle{ display:inline-block; }
 }
+
+/* =================
+   Report Table Styles
+   ================= */
+.toolbar{ display:flex; flex-wrap:wrap; gap:10px; align-items:end; }
+.table-wrap{ width:100%; overflow:auto; border:1px solid var(--border); border-radius:10px; }
+.report-table{ width:100%; border-collapse:separate; border-spacing:0; }
+.report-table thead th{ position:sticky; top:0; background:var(--panel); z-index:1; cursor:pointer; user-select:none; }
+.report-table thead th:hover{ background:#162446; }
+.report-table tbody tr:nth-child(odd){ background:rgba(255,255,255,0.02); }
+.report-table tbody tr:hover{ background:rgba(255,255,255,0.06); }
+.report-table th, .report-table td{ padding:10px 12px; border-bottom:1px solid var(--border); }
+.report-table td.numeric, .report-table th.numeric{ text-align:right; font-variant-numeric: tabular-nums; }
+.row-total td{ font-weight:800; }
 
 /* =================
    Hero/marketing blocks

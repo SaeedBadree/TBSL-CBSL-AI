@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}Staff Purchases | Conserv{% endblock %}
+
+{% block content %}
+<section class="card" style="padding:16px;">
+  <header style="display:flex;justify-content:space-between;align-items:center;gap:12px;">
+    <h2>Supplier Purchases</h2>
+    <a class="btn" href="{{ url_for('staff_purchase_new') }}">New Purchase</a>
+  </header>
+
+  <table class="table" style="width:100%;margin-top:12px;">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Supplier</th>
+        <th>Invoice #</th>
+        <th>Date</th>
+        <th>Status</th>
+        <th>Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for inv in invoices %}
+        <tr>
+          <td><a href="{{ url_for('staff_purchase_new') }}?id={{ inv.id }}">#{{ inv.id }}</a></td>
+          <td>{{ inv.supplier_name or (inv.supplier and inv.supplier.name) or '—' }}</td>
+          <td>{{ inv.invoice_number or '—' }}</td>
+          <td>{{ inv.invoice_date or (inv.created_at.strftime('%Y-%m-%d') if inv.created_at) }}</td>
+          <td>{{ inv.status }}</td>
+          <td>${{ '%.2f' % (inv.total or 0) }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="6" style="text-align:center;">No purchases yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
+
+

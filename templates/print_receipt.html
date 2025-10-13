@@ -1,0 +1,60 @@
+{% set lines = lines or [] %}
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Receipt {{ receipt.receipt_no }}</title>
+  <style>
+    @page { size: 80mm auto; margin: 0; }
+    @media print { body { margin: 0; } }
+    body { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    .receipt { width: 72mm; margin: 0 auto; padding: 6mm 4mm; }
+    .center { text-align: center; }
+    .row { display: flex; justify-content: space-between; }
+    .muted { color: #444; }
+    hr { border: none; border-top: 1px dashed #444; margin: 8px 0; }
+    .totals .row { font-weight: 700; }
+    .small { font-size: 12px; }
+  </style>
+  <script>
+    function triggerPrint(){
+      setTimeout(() => { window.print(); }, 300);
+    }
+  </script>
+  </head>
+<body onload="triggerPrint()">
+  <div class="receipt">
+    <div class="center">
+      <div><strong>Conserv Building Solutions</strong></div>
+      <div class="small muted">Receipt {{ receipt.receipt_no }}</div>
+      <div class="small muted">{{ (receipt.created_at.strftime('%Y-%m-%d %H:%M') if receipt.created_at) }}</div>
+    </div>
+    <hr/>
+    {% if receipt.customer_name %}
+      <div class="small">Customer: {{ receipt.customer_name }}</div>
+    {% endif %}
+    {% if receipt.notes %}
+      <div class="small">{{ receipt.notes }}</div>
+    {% endif %}
+    <hr/>
+    {% for li in lines %}
+      <div class="row">
+        <div class="small">{{ li.item_name }} x {{ '%.2f' % li.quantity }} {{ li.unit }}</div>
+        <div class="small">${{ '%.2f' % li.line_total }}</div>
+      </div>
+    {% endfor %}
+    <hr/>
+    <div class="totals">
+      <div class="row small"><div>Subtotal</div><div>${{ '%.2f' % (receipt.subtotal or 0) }}</div></div>
+      {% if (receipt.tax or 0) > 0 %}
+      <div class="row small"><div>Tax</div><div>${{ '%.2f' % (receipt.tax or 0) }}</div></div>
+      {% endif %}
+      <div class="row small"><div>Total</div><div>${{ '%.2f' % (receipt.total or 0) }}</div></div>
+    </div>
+    <hr/>
+    <div class="center small muted">Thank you!</div>
+  </div>
+</body>
+</html>
+
+

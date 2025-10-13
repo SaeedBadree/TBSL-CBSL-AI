@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block title %}Staff Billing | Conserv{% endblock %}
+
+{% block content %}
+<section class="card" style="padding:16px; display:grid; grid-template-columns:2fr 1fr; gap:16px;">
+  <div>
+    <h2>Create Bill</h2>
+    <section class="products-grid" aria-label="Available products">
+      <article class="product-card" data-name="Sand" data-price="240">
+        <img loading="lazy" src="/static/images/sand-placeholder.jpg" alt="Sand aggregate" class="product-image"/>
+        <h3>Sand</h3>
+        <p class="desc">Versatile for concrete, mortar, and plaster finish.</p>
+        <p class="price">$240.00 <span class="unit">per yard</span></p>
+        <div class="quantity-selector">
+          <button class="qty-dec" type="button" aria-label="Decrease">−</button>
+          <input class="qty" type="number" min="1" value="1" inputmode="numeric"/>
+          <button class="qty-inc" type="button" aria-label="Increase">+</button>
+        </div>
+        <button class="btn add" type="button">Add to bill</button>
+      </article>
+
+      <article class="product-card" data-name="Gravel" data-price="350">
+        <img loading="lazy" src="/static/images/gravel-placeholder.jpg" alt="Gravel aggregate" class="product-image"/>
+        <h3>Gravel</h3>
+        <p class="desc">Stable base for roads, driveways, walkways; great drainage.</p>
+        <p class="price">$350.00 <span class="unit">per yard</span></p>
+        <div class="quantity-selector">
+          <button class="qty-dec" type="button" aria-label="Decrease">−</button>
+          <input class="qty" type="number" min="1" value="1" inputmode="numeric"/>
+          <button class="qty-inc" type="button" aria-label="Increase">+</button>
+        </div>
+        <button class="btn add" type="button">Add to bill</button>
+      </article>
+
+      <article class="product-card" data-name="Sharp Sand" data-price="400">
+        <img loading="lazy" src="/static/images/sharp-sand-placeholder.jpg" alt="Sharp sand aggregate" class="product-image"/>
+        <h3>Sharp Sand</h3>
+        <p class="desc">Ideal for screeding and paving with a robust finish.</p>
+        <p class="price">$400.00 <span class="unit">per yard</span></p>
+        <div class="quantity-selector">
+          <button class="qty-dec" type="button" aria-label="Decrease">−</button>
+          <input class="qty" type="number" min="1" value="1" inputmode="numeric"/>
+          <button class="qty-inc" type="button" aria-label="Increase">+</button>
+        </div>
+        <button class="btn add" type="button">Add to bill</button>
+      </article>
+    </section>
+  </div>
+  <aside class="card" style="padding:12px;">
+    <h3>Current Bill</h3>
+    <label>Customer (optional) <input id="customer_name" type="text"/></label>
+    <div id="bill-lines"></div>
+    <div style="margin-top:8px;"><strong>Subtotal:</strong> $<span id="bill-subtotal">0.00</span></div>
+    <button id="btn-save-receipt" class="btn" style="margin-top:12px;">Save & Print</button>
+  </aside>
+</section>
+{% endblock %}
+
+{% block page_scripts %}
+<script src="/static/staff_billing.js?v={{ ts }}"></script>
+{% endblock %}
+
+

@@ -14,13 +14,26 @@
             <a href="{{ url_for('index') }}" class="brand">Conserv Building Solutions</a>
     
             <!-- Navigation Links -->
-            <div class="nav-links">
-                <a href="{{ url_for('buildadvisor') }}" class="{% if request.endpoint == 'buildadvisor' %}active{% endif %}">BuildAdvisor</a>
-                <a href="{{ url_for('upload_page') }}" class="{% if request.endpoint == 'upload_page' %}active{% endif %}">Materials Extractor</a>
+            <div class="nav-links" id="nav-links">
                 <a href="{{ url_for('index') }}" class="{% if request.endpoint == 'index' %}active{% endif %}">Home</a>
                 <a href="{{ url_for('products') }}" class="{% if request.endpoint == 'products' %}active{% endif %}">Products</a>
+                <a href="{{ url_for('buildadvisor') }}" class="{% if request.endpoint == 'buildadvisor' %}active{% endif %}">BuildAdvisor</a>
+                <a href="{{ url_for('upload_page') }}" class="{% if request.endpoint == 'upload_page' %}active{% endif %}">Materials Extractor</a>
                 {% if current_user.is_authenticated %}
                     <a href="{{ url_for('payment') }}" class="{% if request.endpoint == 'payment' %}active{% endif %}">Payment</a>
+                    {% if current_user.is_staff %}
+                        <div class="dropdown" aria-expanded="false">
+                          <a class="dropdown-toggle {% if request.endpoint in ['staff_reports_purchases','staff_reports_sales','staff_reports_gp','staff_expenses_list','staff_expense_new','staff_purchases_list','staff_purchase_new','staff_billing'] %}active{% endif %}" href="#" onclick="toggleStaffDropdown(event)">Staff</a>
+                          <div class="dropdown-menu" role="menu" aria-label="Staff menu">
+                            <a href="{{ url_for('staff_purchases_list') }}">Purchases</a>
+                            <a href="{{ url_for('staff_billing') }}">Billing</a>
+                            <a href="{{ url_for('staff_reports_purchases') }}">Reports: Purchases</a>
+                            <a href="{{ url_for('staff_reports_sales') }}">Reports: Sales</a>
+                            <a href="{{ url_for('staff_reports_gp') }}">Reports: Gross Profit</a>
+                            <a href="{{ url_for('staff_expenses_list') }}">Expenses</a>
+                          </div>
+                        </div>
+                    {% endif %}
                     <a href="{{ url_for('logout') }}" class="{% if request.endpoint == 'logout' %}active{% endif %}">Logout</a>
                 {% else %}
                     <a href="{{ url_for('login') }}" class="{% if request.endpoint == 'login' %}active{% endif %}">Login</a>
@@ -106,6 +119,20 @@
         alert("Thank you for your purchase!");
         localStorage.removeItem('cart');
         window.location.href = '/';
+    }
+    
+    function toggleMenu(){
+        var links = document.getElementById('nav-links');
+        if (!links) return;
+        links.classList.toggle('show');
+    }
+
+    function toggleStaffDropdown(e){
+        e.preventDefault();
+        var el = e.target.closest('.dropdown');
+        if (!el) return;
+        var expanded = el.getAttribute('aria-expanded') === 'true';
+        el.setAttribute('aria-expanded', expanded ? 'false' : 'true');
     }
     
     // Populate cart on page load

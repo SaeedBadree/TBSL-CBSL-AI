@@ -32,3 +32,26 @@ Put your CSVs into `./data`:
 3. `expand_steps_with_ai()` writes a brief step-by-step plan (optional).
 
 Toggle modes with `BOM_MODE` (ai/hybrid/rule) if you later want to mix formula-based items as a baseline.
+
+## Staff ERP Module (Purchases, Billing, Printing)
+
+Staff-only tools for supplier purchases and quick billing.
+
+Features
+- Upload supplier bills (images/PDF) → AI extraction → editable lines
+- AI-assisted text entry for non-bill purchases
+- Create quick customer bills from aggregates and print thermal receipts
+- Purchases report with totals in yd³ (and CSV export)
+
+Access
+- Mark a user as staff by setting `is_staff = 1` in the `user` table. On first run, the app attempts to add this column automatically for SQLite.
+
+Routes
+- UI: `/staff/purchases`, `/staff/purchases/new`, `/staff/billing`, `/staff/reports/purchases`
+- API: `/api/staff/purchases/extract`, `/api/staff/purchases/ai-parse-text`, `/api/staff/purchases`, `/api/staff/receipts`
+
+Printing
+- Browser print to Star TSP via `templates/print_receipt.html` using 80mm `@page` CSS. Use the system print dialog, select the Star printer, and disable headers/footers.
+
+Environment
+- Requires `OPENAI_API_KEY`. Vision/Invoice OCR uses OpenAI with image/PDF support (`pypdfium2`, `Pillow`).

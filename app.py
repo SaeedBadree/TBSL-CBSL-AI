@@ -5,7 +5,8 @@ import json
 import time as _time
 import logging
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta
+from functools import wraps
 from urllib.parse import urlparse, urljoin
 
 import requests
@@ -165,6 +166,8 @@ class User(db.Model, UserMixin):
     distance_km        = db.Column(db.Float, nullable=True)
     delivery_fee       = db.Column(db.Float, nullable=True)
     created_at         = db.Column(db.DateTime, default=datetime.utcnow)
+    # Staff access flag (added via schema helper if missing)
+    is_staff           = db.Column(db.Boolean, nullable=False, default=False)
 
 class Order(db.Model):
     id           = db.Column(db.Integer, primary_key=True)
@@ -172,6 +175,84 @@ class Order(db.Model):
     product_name = db.Column(db.String(150), nullable=False)
     amount       = db.Column(db.Float, nullable=False)
     created_at   = db.Column(db.DateTime, default=datetime.utcnow)
+
+# --------------------------
+# Staff ERP Models
+# --------------------------
+
+class Supplier(db.Model):
+    id         = db.Column(db.Integer, primary_key=True)
+    name       = db.Column(db.String(200), nullable=False)
+    phone      = db.Column(db.String(100), nullable=True)
+    email      = db.Column(db.String(200), nullable=True)
+    address    = db.Column(db.String(400), nullable=True)
+    tax_id     = db.Column(db.String(100), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    invoices   = db.relationship("PurchaseInvoice", backref="supplier", lazy=True)
+
+class PurchaseInvoice(db.Model):
+    id              = db.Column(db.Integer, primary_key=True)
+    supplier_id     = db.Column(db.Integer, db.ForeignKey("supplier.id"), nullable=True)
+    supplier_name   = db.Column(db.String(200), nullable=True)  # fallback if supplier not in table yet
+    invoice_date    = db.Column(db.String(40), nullable=True)
+    invoice_date_dt = db.Column(db.Date, nullable=True)
+    invoice_number  = db.Column(db.String(120), nullable=True)
+    currency        = db.Column(db.String(10), nullable=True, default="TTD")
+    subtotal        = db.Column(db.Float, nullable=True)
+    tax             = db.Column(db.Float, nullable=True)
+    total           = db.Column(db.Float, nullable=True)
+    status          = db.Column(db.String(20), nullable=False, default="draft")  # draft|posted
+    uploaded_files  = db.Column(db.Text, nullable=True)  # JSON string list of file ids
+    created_by      = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=True)
+    created_at      = db.Column(db.DateTime, default=datetime.utcnow)
+    lines           = db.relationship("PurchaseLineItem", backref="invoice", lazy=True)
+
+class PurchaseLineItem(db.Model):
+    id          = db.Column(db.Integer, primary_key=True)
+    invoice_id  = db.Column(db.Integer, db.ForeignKey("purchase_invoice.id"), nullable=False)
+    description = db.Column(db.String(300), nullable=False)
+    category    = db.Column(db.String(100), nullable=True)
+    material_key= db.Column(db.String(100), nullable=True)
+    unit        = db.Column(db.String(20), nullable=False)  # yd3, m3, bag, etc.
+    quantity    = db.Column(db.Float, nullable=False)
+    unit_price  = db.Column(db.Float, nullable=True)
+    line_total  = db.Column(db.Float, nullable=True)
+
+class SalesReceipt(db.Model):
+    id            = db.Column(db.Integer, primary_key=True)
+    receipt_no    = db.Column(db.String(50), nullable=True)
+    customer_name = db.Column(db.String(200), nullable=True)
+    created_by    = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=True)
+    created_at    = db.Column(db.DateTime, default=datetime.utcnow)
+    subtotal      = db.Column(db.Float, nullable=True)
+    tax           = db.Column(db.Float, nullable=True)
+    total         = db.Column(db.Float, nullable=True)
+    notes         = db.Column(db.String(300), nullable=True)
+    lines         = db.relationship("SalesReceiptLine", backref="receipt", lazy=True)
+
+class SalesReceiptLine(db.Model):
+    id          = db.Column(db.Integer, primary_key=True)
+    receipt_id  = db.Column(db.Integer, db.ForeignKey("sales_receipt.id"), nullable=False)
+    item_name   = db.Column(db.String(200), nullable=False)
+    material_key= db.Column(db.String(100), nullable=True)
+    unit        = db.Column(db.String(20), nullable=False, default="yd3")
+    quantity    = db.Column(db.Float, nullable=False)
+    unit_price  = db.Column(db.Float, nullable=False)
+    line_total  = db.Column(db.Float, nullable=False)
+
+# --------------------------
+# Expenses model
+# --------------------------
+
+class Expense(db.Model):
+    id          = db.Column(db.Integer, primary_key=True)
+    date        = db.Column(db.String(40), nullable=True)
+    date_dt     = db.Column(db.Date, nullable=True)
+    category    = db.Column(db.String(50), nullable=False)  # salaries, fuel, maintenance, other
+    description = db.Column(db.String(300), nullable=True)
+    amount      = db.Column(db.Float, nullable=False)
+    created_by  = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=True)
+    created_at  = db.Column(db.DateTime, default=datetime.utcnow)
 
 @login_manager.user_loader
 def load_user(user_id):
@@ -188,7 +269,15 @@ except Exception as e:
     log.exception(_BA_IMPORT_ERROR)
 
 try:
-    from ai_text import propose_bom_with_ai, expand_steps_with_ai, propose_bom_from_vision
+    from ai_text import (
+        propose_bom_with_ai,
+        expand_steps_with_ai,
+        propose_bom_from_vision,
+        propose_invoice_from_vision,
+        propose_purchase_from_text,
+        propose_expenses_from_text,
+        propose_expenses_from_vision,
+    )
 except Exception as e:
     _BA_IMPORT_ERROR = (_BA_IMPORT_ERROR + " | " if _BA_IMPORT_ERROR else "") + f"Import error in ai_text: {e}"
     log.exception("AI import error", exc_info=True)
@@ -319,6 +408,109 @@ def add_no_cache_headers(resp):
         resp.headers["Expires"] = "0"
     return resp
 
+# --------------------------
+# Staff auth helper
+# --------------------------
+
+def staff_required(fn):
+    @wraps(fn)
+    @login_required
+    def wrapper(*args, **kwargs):
+        if not getattr(current_user, "is_staff", False):
+            if request.path.startswith("/api/"):
+                return jsonify({"ok": False, "error": "Forbidden"}), 403
+            flash("Staff access required.", "danger")
+            return redirect(url_for("index"))
+        return fn(*args, **kwargs)
+    return wrapper
+
+# --------------------------
+# Staff report helpers & unit conversions
+# --------------------------
+
+# Bag constants (1 yd³ = 20 bags; 1 bag = 0.05 yd³)
+BAGS_PER_YD3 = int(os.getenv("BAGS_PER_YD3", "20")) or 20
+BAG_TO_YD3 = 1.0 / float(BAGS_PER_YD3)
+BAG_COST_PER_BAG = float(os.getenv("BAG_COST_PER_BAG", "2"))
+
+def to_yd3(quantity: float, unit: str, product: str | None = None) -> float:
+    try:
+        qv = float(quantity or 0)
+    except Exception:
+        return 0.0
+    u = (unit or "").strip().lower()
+    if u == "yd3":
+        return qv
+    if u == "m3":
+        # 1 m3 = 0.764555 yd3
+        return qv / 0.764555
+    if u in ("bag", "bags"):
+        # Only treat bags as yd3 for aggregates we recognize
+        prod = normalize_material_name(product or "")
+        if prod in ("sand", "gravel", "sharp_sand"):
+            return qv * BAG_TO_YD3
+        return 0.0
+    return 0.0
+
+
+def normalize_material_name(name: str) -> str:
+    n = (name or "").strip().lower()
+    if not n:
+        return "other"
+    # prefer exact keys
+    if any(k in n for k in ("sharp sand", "sharp_sand")):
+        return "sharp_sand"
+    if "gravel" in n:
+        return "gravel"
+    if "sand" in n:
+        return "sand"
+    return "other"
+
+
+def _compute_weighted_avg_cost(from_date: str | None, to_date: str | None) -> dict:
+    """Return { product: avg_cost_per_yd3 } based on purchases in date range."""
+    q = db.session.query(PurchaseInvoice, PurchaseLineItem).join(
+        PurchaseLineItem, PurchaseLineItem.invoice_id == PurchaseInvoice.id
+    )
+    if from_date:
+        q = q.filter((PurchaseInvoice.invoice_date_dt >= from_date) | (PurchaseInvoice.created_at >= from_date))
+    if to_date:
+        q = q.filter((PurchaseInvoice.invoice_date_dt <= to_date) | (PurchaseInvoice.created_at <= to_date))
+
+    totals: dict[str, dict] = {}
+    rows = q.all()
+    for inv, li in rows:
+        # Determine product name
+        key_src = (li.material_key or li.category or li.description or "").strip()
+        product = normalize_material_name(key_src)
+        if product == "other":
+            # Skip non-aggregate lines for v1 cost
+            continue
+        qty_yd3 = to_yd3(li.quantity, li.unit, product)
+        if qty_yd3 <= 0:
+            continue
+        line_cost = li.line_total
+        if line_cost is None:
+            try:
+                line_cost = (li.unit_price or 0.0) * float(li.quantity or 0.0)
+            except Exception:
+                line_cost = 0.0
+        try:
+            line_cost = float(line_cost or 0.0)
+        except Exception:
+            line_cost = 0.0
+
+        if product not in totals:
+            totals[product] = {"qty_yd3": 0.0, "cost": 0.0}
+        totals[product]["qty_yd3"] += qty_yd3
+        totals[product]["cost"] += line_cost
+
+    avg: dict[str, float] = {}
+    for p, t in totals.items():
+        if t["qty_yd3"] > 0:
+            avg[p] = t["cost"] / t["qty_yd3"]
+    return avg
+
 @app.errorhandler(404)
 def handle_404(e):
     if request.path.startswith("/api/"):
@@ -373,6 +565,7 @@ def signup():
         confirm  = request.form.get("confirm") or request.form.get("password2") or ""
         address  = (request.form.get("address") or "").strip()
         age_raw  = (request.form.get("age") or "").strip()
+        is_staff_flag = True if request.form.get("is_staff") else False
 
         # From hidden fields (from signup.html)
         place_id          = (request.form.get("place_id") or "").strip()
@@ -430,7 +623,8 @@ def signup():
                 place_id=place_id or None,
                 formatted_address=formatted_address or address,
                 lat=lat, lng=lng,
-                distance_km=distance_km, delivery_fee=delivery_fee
+                distance_km=distance_km, delivery_fee=delivery_fee,
+                is_staff=bool(is_staff_flag)
             )
             db.session.add(user)
             db.session.commit()
@@ -534,6 +728,473 @@ def upload_page():
     return render_template("upload.html")
 
 # --------------------------
+# Staff pages (UI)
+# --------------------------
+
+@app.get("/staff/purchases")
+@staff_required
+def staff_purchases_list():
+    # Simple latest-first list; filters can be added later
+    invoices = PurchaseInvoice.query.order_by(PurchaseInvoice.created_at.desc()).limit(200).all()
+    return render_template("staff/purchases_list.html", invoices=invoices)
+
+
+@app.get("/staff/purchases/new")
+@staff_required
+def staff_purchase_new():
+    inv_id = request.args.get("id")
+    invoice_data = None
+    if inv_id:
+        try:
+            inv = PurchaseInvoice.query.get(int(inv_id))
+        except Exception:
+            inv = None
+        if inv:
+            lines = PurchaseLineItem.query.filter_by(invoice_id=inv.id).all()
+            invoice_data = {
+                "id": inv.id,
+                "supplier_name": inv.supplier_name or (inv.supplier.name if getattr(inv, "supplier", None) else None),
+                "invoice_number": inv.invoice_number,
+                "invoice_date": inv.invoice_date,
+                "currency": inv.currency,
+                "subtotal": inv.subtotal,
+                "tax": inv.tax,
+                "total": inv.total,
+                "status": inv.status,
+                "lines": [
+                    {
+                        "id": li.id,
+                        "description": li.description,
+                        "category": li.category,
+                        "material_key": li.material_key,
+                        "unit": li.unit,
+                        "qty": li.quantity,
+                        "unit_price": li.unit_price,
+                        "line_total": li.line_total,
+                    }
+                    for li in lines
+                ]
+            }
+    return render_template("staff/purchase_edit.html", invoice=invoice_data)
+
+
+@app.get("/staff/billing")
+@staff_required
+def staff_billing():
+    return render_template("staff/billing.html")
+
+
+@app.get("/staff/reports/purchases")
+@staff_required
+def staff_reports_purchases():
+    """Aggregate purchase volumes (in yd3) and costs by material and supplier.
+    Supports CSV via ?format=csv&from=YYYY-MM-DD&to=YYYY-MM-DD
+    """
+    # Filters
+    from_date = (request.args.get("from") or "").strip() or None
+    to_date = (request.args.get("to") or "").strip() or None
+    fmt = (request.args.get("format") or "").strip().lower()
+
+    q = db.session.query(PurchaseInvoice, PurchaseLineItem).join(PurchaseLineItem, PurchaseLineItem.invoice_id == PurchaseInvoice.id)
+    if from_date:
+        q = q.filter((PurchaseInvoice.invoice_date_dt >= from_date) | (PurchaseInvoice.created_at >= from_date))
+    if to_date:
+        q = q.filter((PurchaseInvoice.invoice_date_dt <= to_date) | (PurchaseInvoice.created_at <= to_date))
+
+    def to_yd3(quantity: float, unit: str) -> float:
+        try:
+            qv = float(quantity or 0)
+        except Exception:
+            return 0.0
+        u = (unit or "").strip().lower()
+        if u == "yd3":
+            return qv
+        if u == "m3":
+            # 1 m3 = 1 / 0.764555 yd3 ≈ 1.308
+            return qv / 0.764555
+        # ignore non-volume units in yd3 totals
+        return 0.0
+
+    # Aggregate in Python for clarity
+    rows = q.all()
+    agg = {}
+    for inv, li in rows:
+        material = (li.material_key or li.category or li.description or "Unknown").strip()
+        supplier = inv.supplier.name if getattr(inv, "supplier", None) else (inv.supplier_name or "Unknown")
+        key = (material, supplier)
+        qty_yd3 = to_yd3(li.quantity, li.unit)
+        cost = float(li.line_total or 0.0)
+        if key not in agg:
+            agg[key] = {"material": material, "supplier": supplier, "qty_yd3": 0.0, "cost": 0.0}
+        agg[key]["qty_yd3"] += qty_yd3
+        agg[key]["cost"] += cost
+
+    data = sorted(agg.values(), key=lambda x: (x["material"], x["supplier"]))
+
+    if fmt == "csv":
+        import csv
+        from io import StringIO
+        sio = StringIO()
+        w = csv.writer(sio)
+        w.writerow(["material", "supplier", "qty_yd3", "cost"])
+        for r in data:
+            w.writerow([r["material"], r["supplier"], f"{r['qty_yd3']:.3f}", f"{r['cost']:.2f}"])
+        resp = app.response_class(sio.getvalue(), mimetype="text/csv")
+        resp.headers["Content-Disposition"] = "attachment; filename=purchases_report.csv"
+        return resp
+
+    return render_template("staff/reports_purchases.html", rows=data, from_date=from_date, to_date=to_date)
+
+
+# --------------------------
+# Expenses: UI & APIs
+# --------------------------
+
+@app.get("/staff/expenses")
+@staff_required
+def staff_expenses_list():
+    from_date = (request.args.get("from") or "").strip() or None
+    to_date = (request.args.get("to") or "").strip() or None
+    category = (request.args.get("category") or "").strip() or None
+    fmt = (request.args.get("format") or "").strip().lower()
+
+    q = Expense.query
+    if from_date:
+        try:
+            q = q.filter(Expense.date_dt >= datetime.strptime(from_date, "%Y-%m-%d").date())
+        except Exception:
+            pass
+    if to_date:
+        try:
+            q = q.filter(Expense.date_dt <= datetime.strptime(to_date, "%Y-%m-%d").date())
+        except Exception:
+            pass
+    if category:
+        q = q.filter(Expense.category == category)
+
+    rows = q.order_by(Expense.date_dt.desc().nullslast(), Expense.created_at.desc()).all()
+
+    if fmt == "csv":
+        import csv
+        from io import StringIO
+        sio = StringIO()
+        w = csv.writer(sio)
+        w.writerow(["date", "category", "description", "amount"])
+        for e in rows:
+            w.writerow([e.date or (e.date_dt.isoformat() if e.date_dt else ""), e.category, e.description or "", f"{(e.amount or 0):.2f}"])
+        resp = app.response_class(sio.getvalue(), mimetype="text/csv")
+        resp.headers["Content-Disposition"] = "attachment; filename=expenses.csv"
+        return resp
+
+    return render_template("staff/expenses_list.html", rows=rows, from_date=from_date, to_date=to_date, category=category)
+
+
+@app.get("/staff/expenses/new")
+@staff_required
+def staff_expense_new():
+    return render_template("staff/expense_edit.html")
+
+
+@app.post("/api/staff/expenses")
+@staff_required
+def api_staff_expenses_save():
+    try:
+        body = request.get_json(force=True) or {}
+    except Exception as ex:
+        return jsonify({"ok": False, "error": f"Invalid JSON: {ex}"}), 400
+
+    eid = body.get("id")
+    date_s = (body.get("date") or "").strip() or None
+    category = (body.get("category") or "").strip() or None
+    description = (body.get("description") or "").strip() or None
+    try:
+        amount = float(body.get("amount") or 0)
+    except Exception:
+        amount = 0.0
+    if not category or amount <= 0:
+        return jsonify({"ok": False, "error": "category and positive amount are required"}), 400
+
+    date_dt = None
+    if date_s:
+        try:
+            date_dt = datetime.strptime(date_s, "%Y-%m-%d").date()
+        except Exception:
+            date_dt = None
+
+    if eid:
+        e = Expense.query.get(int(eid))
+        if not e:
+            return jsonify({"ok": False, "error": "Expense not found"}), 404
+        e.date = date_s
+        e.date_dt = date_dt
+        e.category = category
+        e.description = description
+        e.amount = amount
+    else:
+        e = Expense(
+            date=date_s, date_dt=date_dt, category=category, description=description,
+            amount=amount, created_by=current_user.id if current_user.is_authenticated else None
+        )
+        db.session.add(e)
+
+    db.session.commit()
+    return jsonify({"ok": True})
+
+
+@app.post("/api/staff/expenses/extract")
+@staff_required
+def api_staff_expenses_extract():
+    try:
+        body = request.get_json(force=True) or {}
+    except Exception as ex:
+        return jsonify({"ok": False, "error": f"Invalid JSON: {ex}"}), 400
+    file_ids = body.get("file_ids") or []
+    if not isinstance(file_ids, list) or not file_ids:
+        return jsonify({"ok": False, "error": "file_ids must be a non-empty list"}), 400
+    if not OPENAI_API_KEY:
+        return jsonify({"ok": False, "error": "OPENAI_API_KEY is not set"}), 500
+    # Resolve paths
+    paths = []
+    for fid in file_ids:
+        fname = secure_filename(str(fid))
+        path = os.path.join(app.config["UPLOAD_FOLDER"], fname)
+        if not os.path.isfile(path):
+            return jsonify({"ok": False, "error": f"File not found: {fid}"}), 400
+        paths.append(path)
+    data = propose_expenses_from_vision(paths)
+    if not data:
+        return jsonify({"ok": False, "error": "AI extraction failed"}), 502
+    return jsonify({"ok": True, "data": data})
+
+
+@app.post("/api/staff/expenses/ai-parse-text")
+@staff_required
+def api_staff_expenses_parse_text():
+    try:
+        body = request.get_json(force=True) or {}
+    except Exception as ex:
+        return jsonify({"ok": False, "error": f"Invalid JSON: {ex}"}), 400
+    text = (body.get("text") or "").strip()
+    if not text:
+        return jsonify({"ok": False, "error": "text is required"}), 400
+    if not OPENAI_API_KEY:
+        return jsonify({"ok": False, "error": "OPENAI_API_KEY is not set"}), 500
+    data = propose_expenses_from_text(text)
+    if not data:
+        return jsonify({"ok": False, "error": "AI parse failed"}), 502
+    return jsonify({"ok": True, "data": data})
+
+
+@app.get("/staff/reports/sales")
+@staff_required
+def staff_reports_sales():
+    from_date = (request.args.get("from") or "").strip() or None
+    to_date = (request.args.get("to") or "").strip() or None
+    fmt = (request.args.get("format") or "").strip().lower()
+
+    q = db.session.query(SalesReceipt, SalesReceiptLine).join(SalesReceiptLine, SalesReceiptLine.receipt_id == SalesReceipt.id)
+    if from_date:
+        q = q.filter(SalesReceipt.created_at >= datetime.strptime(from_date, "%Y-%m-%d"))
+    if to_date:
+        # include end-of-day
+        q = q.filter(SalesReceipt.created_at < datetime.strptime(to_date, "%Y-%m-%d") + timedelta(days=1))
+
+    rows = q.all()
+    agg = {}
+    for r, li in rows:
+        product = normalize_material_name(li.material_key or li.item_name)
+        if product == "other":
+            continue
+        qty = float(li.quantity or 0.0)
+        # Convert to yd3 if unit is bag
+        qty_yd3 = to_yd3(qty, li.unit or 'yd3', product)
+        if (li.unit or 'yd3').lower() in ('bag','bags'):
+            qty = qty_yd3
+        revenue = float(li.line_total or (qty * float(li.unit_price or 0.0)))
+        if product not in agg:
+            agg[product] = {"product": product, "qty_yd3": 0.0, "revenue": 0.0}
+        agg[product]["qty_yd3"] += qty
+        agg[product]["revenue"] += revenue
+
+    data = []
+    for p, d in sorted(agg.items()):
+        avg_price = (d["revenue"] / d["qty_yd3"]) if d["qty_yd3"] > 0 else 0.0
+        data.append({"product": p, "qty_yd3": d["qty_yd3"], "revenue": d["revenue"], "avg_price": avg_price})
+
+    if fmt == "csv":
+        import csv
+        from io import StringIO
+        sio = StringIO()
+        w = csv.writer(sio)
+        w.writerow(["product", "qty_yd3", "revenue", "avg_price"])
+        for r in data:
+            w.writerow([r["product"], f"{r['qty_yd3']:.3f}", f"{r['revenue']:.2f}", f"{r['avg_price']:.2f}"])
+        resp = app.response_class(sio.getvalue(), mimetype="text/csv")
+        resp.headers["Content-Disposition"] = "attachment; filename=sales_report.csv"
+        return resp
+
+    return render_template("staff/reports_sales.html", rows=data, from_date=from_date, to_date=to_date)
+
+
+@app.get("/staff/reports/gp")
+@staff_required
+def staff_reports_gp():
+    from_date = (request.args.get("from") or "").strip() or None
+    to_date = (request.args.get("to") or "").strip() or None
+    fmt = (request.args.get("format") or "").strip().lower()
+
+    # Sales aggregation
+    q = db.session.query(SalesReceipt, SalesReceiptLine).join(SalesReceiptLine, SalesReceiptLine.receipt_id == SalesReceipt.id)
+    if from_date:
+        q = q.filter(SalesReceipt.created_at >= datetime.strptime(from_date, "%Y-%m-%d"))
+    if to_date:
+        q = q.filter(SalesReceipt.created_at < datetime.strptime(to_date, "%Y-%m-%d") + timedelta(days=1))
+    rows = q.all()
+    sales = {}
+    for r, li in rows:
+        product = normalize_material_name(li.material_key or li.item_name)
+        if product == "other":
+            continue
+        qty_raw = float(li.quantity or 0.0)
+        unit = (li.unit or 'yd3').lower()
+        if product not in sales:
+            sales[product] = {"qty_yd3_total": 0.0, "qty_yd3_bag": 0.0, "revenue": 0.0}
+        if unit in ('bag','bags'):
+            bag_yd3 = to_yd3(qty_raw, unit, product)
+            yd3_total = bag_yd3
+            sales[product]["qty_yd3_bag"] += bag_yd3
+        else:
+            bag_yd3 = 0.0
+            yd3_total = to_yd3(qty_raw, unit, product)
+            if unit == 'yd3':
+                yd3_total = qty_raw
+        price = float(li.unit_price or 0.0)
+        revenue = float(li.line_total or (qty_raw * price))
+        sales[product]["qty_yd3_total"] += yd3_total
+        sales[product]["revenue"] += revenue
+
+    # Weighted average cost from purchases
+    avg_cost = _compute_weighted_avg_cost(from_date, to_date)
+
+    # Compute GP per product (include bag material cost component)
+    data = []
+    grand_qty = 0.0
+    grand_revenue = 0.0
+    grand_cogs = 0.0
+    for product in sorted(sales.keys()):
+        qty = sales[product]["qty_yd3_total"]
+        revenue = sales[product]["revenue"]
+        cost_per_yd3 = float(avg_cost.get(product, 0.0))
+        # Add packaging cost for bag-sold quantities only
+        packaging_cost_per_yd3 = BAG_COST_PER_BAG * BAGS_PER_YD3 if product in ("sand","gravel","sharp_sand") else 0.0
+        bag_qty_yd3 = sales[product].get("qty_yd3_bag", 0.0)
+        cogs = (cost_per_yd3 * qty) + (packaging_cost_per_yd3 * bag_qty_yd3)
+        gp = revenue - cogs
+        margin = (gp / revenue * 100.0) if revenue > 0 else 0.0
+        data.append({
+            "product": product,
+            "qty_yd3": qty,
+            "revenue": revenue,
+            "avg_cost_yd3": cost_per_yd3,
+            "cogs": cogs,
+            "gp": gp,
+            "margin": margin,
+        })
+        grand_qty += qty
+        grand_revenue += revenue
+        grand_cogs += cogs
+
+    grand = {
+        "qty_yd3": grand_qty,
+        "revenue": grand_revenue,
+        "cogs": grand_cogs,
+        "gp": (grand_revenue - grand_cogs),
+        "margin": (((grand_revenue - grand_cogs) / grand_revenue) * 100.0) if grand_revenue > 0 else 0.0,
+    }
+
+    # By customer aggregation using avg_cost per product
+    by_customer_map = {}
+    for r, li in rows:
+        product = normalize_material_name(li.material_key or li.item_name)
+        if product == "other":
+            continue
+        qty_raw = float(li.quantity or 0.0)
+        unit = (li.unit or 'yd3').lower()
+        if unit in ('bag','bags'):
+            bag_qty_yd3 = to_yd3(qty_raw, unit, product)
+            yd3_total = bag_qty_yd3
+        else:
+            bag_qty_yd3 = 0.0
+            yd3_total = to_yd3(qty_raw, unit, product)
+            if unit == 'yd3':
+                yd3_total = qty_raw
+        revenue = float(li.line_total or (qty_raw * float(li.unit_price or 0.0)))
+        cost_per_yd3 = float(avg_cost.get(product, 0.0))
+        packaging_cost_per_yd3 = BAG_COST_PER_BAG * BAGS_PER_YD3 if product in ("sand","gravel","sharp_sand") else 0.0
+        cogs = (cost_per_yd3 * yd3_total) + (packaging_cost_per_yd3 * bag_qty_yd3)
+        customer = (r.customer_name or "Unknown").strip() or "Unknown"
+        if customer not in by_customer_map:
+            by_customer_map[customer] = {"customer": customer, "qty_yd3": 0.0, "revenue": 0.0, "cogs": 0.0}
+        by_customer_map[customer]["qty_yd3"] += yd3_total
+        by_customer_map[customer]["revenue"] += revenue
+        by_customer_map[customer]["cogs"] += cogs
+
+    by_customer = []
+    for cust, d in sorted(by_customer_map.items()):
+        gp = d["revenue"] - d["cogs"]
+        margin = (gp / d["revenue"] * 100.0) if d["revenue"] > 0 else 0.0
+        by_customer.append({
+            "customer": cust,
+            "qty_yd3": d["qty_yd3"],
+            "revenue": d["revenue"],
+            "cogs": d["cogs"],
+            "gp": gp,
+            "margin": margin,
+        })
+
+    # Operating expenses (within date range)
+    opex_q = Expense.query
+    if from_date:
+        try:
+            opex_q = opex_q.filter(Expense.date_dt >= datetime.strptime(from_date, "%Y-%m-%d").date())
+        except Exception:
+            pass
+    if to_date:
+        try:
+            opex_q = opex_q.filter(Expense.date_dt <= datetime.strptime(to_date, "%Y-%m-%d").date())
+        except Exception:
+            pass
+    opex_total = sum(float(e.amount or 0.0) for e in opex_q.all())
+
+    net_profit = (grand["gp"] - opex_total)
+
+    if fmt == "csv":
+        import csv
+        from io import StringIO
+        sio = StringIO()
+        w = csv.writer(sio)
+        w.writerow(["product", "qty_yd3", "revenue", "avg_cost_yd3", "cogs", "gp", "margin_pct"])
+        for r in data:
+            w.writerow([
+                r["product"], f"{r['qty_yd3']:.3f}", f"{r['revenue']:.2f}", f"{r['avg_cost_yd3']:.2f}",
+                f"{r['cogs']:.2f}", f"{r['gp']:.2f}", f"{r['margin']:.1f}"
+            ])
+        # Grand total row
+        w.writerow([
+            "TOTAL",
+            f"{grand['qty_yd3']:.3f}", f"{grand['revenue']:.2f}", "",
+            f"{grand['cogs']:.2f}", f"{grand['gp']:.2f}", f"{grand['margin']:.1f}"
+        ])
+        # Opex and Net Profit rows
+        w.writerow(["OPEX", "", "", "", f"{opex_total:.2f}", "", ""]) 
+        w.writerow(["NET_PROFIT", "", "", "", "", f"{net_profit:.2f}", ""]) 
+        resp = app.response_class(sio.getvalue(), mimetype="text/csv")
+        resp.headers["Content-Disposition"] = "attachment; filename=gp_report.csv"
+        return resp
+
+    return render_template("staff/reports_gp.html", rows=data, from_date=from_date, to_date=to_date, grand=grand, by_customer=by_customer, opex_total=opex_total, net_profit=net_profit)
+
+# --------------------------
 # Upload API
 # --------------------------
 @app.post("/api/uploads")
@@ -569,6 +1230,203 @@ def api_uploads():
         return jsonify({"ok": False, "error": "Nothing saved"}), 400
 
     return jsonify({"ok": True, "files": saved})
+
+# --------------------------
+# Staff Purchases APIs
+# --------------------------
+
+@app.post("/api/staff/purchases/extract")
+@staff_required
+def api_staff_extract_invoice():
+    """Body: { file_ids: [string] } -> AI parsed invoice details"""
+    try:
+        body = request.get_json(force=True) or {}
+    except Exception as ex:
+        return jsonify({"ok": False, "error": f"Invalid JSON: {ex}"}), 400
+    file_ids = body.get("file_ids") or []
+    if not isinstance(file_ids, list) or not file_ids:
+        return jsonify({"ok": False, "error": "file_ids must be a non-empty list"}), 400
+    # Validate and map to paths under uploads
+    paths = []
+    for fid in file_ids:
+        fname = secure_filename(str(fid))
+        path = os.path.join(app.config["UPLOAD_FOLDER"], fname)
+        if not os.path.isfile(path):
+            return jsonify({"ok": False, "error": f"File not found: {fid}"}), 400
+        paths.append(path)
+
+    if not OPENAI_API_KEY:
+        return jsonify({"ok": False, "error": "OPENAI_API_KEY is not set"}), 500
+
+    data = propose_invoice_from_vision(paths)
+    if not data or not isinstance(data, dict):
+        return jsonify({"ok": False, "error": "AI extraction failed"}), 502
+    return jsonify({"ok": True, "data": data})
+
+
+@app.post("/api/staff/purchases/ai-parse-text")
+@staff_required
+def api_staff_parse_text():
+    try:
+        body = request.get_json(force=True) or {}
+    except Exception as ex:
+        return jsonify({"ok": False, "error": f"Invalid JSON: {ex}"}), 400
+    text = (body.get("text") or "").strip()
+    if not text:
+        return jsonify({"ok": False, "error": "text is required"}), 400
+    if not OPENAI_API_KEY:
+        return jsonify({"ok": False, "error": "OPENAI_API_KEY is not set"}), 500
+    data = propose_purchase_from_text(text)
+    if not data or not isinstance(data, dict):
+        return jsonify({"ok": False, "error": "AI parse failed"}), 502
+    return jsonify({"ok": True, "data": data})
+
+
+@app.post("/api/staff/purchases")
+@staff_required
+def api_staff_save_purchase():
+    """Create or update a purchase invoice with line items.
+    Body may include id (to update), fields of PurchaseInvoice and lines[] (with optional id to update).
+    """
+    try:
+        body = request.get_json(force=True) or {}
+    except Exception as ex:
+        return jsonify({"ok": False, "error": f"Invalid JSON: {ex}"}), 400
+
+    supplier_name = (body.get("supplier_name") or "").strip() or None
+    supplier_id = body.get("supplier_id")
+    invoice_date = (body.get("invoice_date") or "").strip() or None
+    invoice_number = (body.get("invoice_number") or "").strip() or None
+    currency = (body.get("currency") or "TTD").strip() or "TTD"
+    uploaded_files = body.get("uploaded_files") or []
+    status = (body.get("status") or "draft").strip() or "draft"
+    lines = body.get("lines") or []
+    invoice_id = body.get("id")
+
+    if not isinstance(lines, list) or not lines:
+        return jsonify({"ok": False, "error": "lines must be a non-empty list"}), 400
+
+    # Create supplier if only supplier_name provided and no supplier_id
+    sup = None
+    if supplier_id:
+        sup = Supplier.query.get(int(supplier_id))
+    elif supplier_name:
+        sup = Supplier(name=supplier_name)
+        db.session.add(sup)
+        db.session.flush()
+
+    # Parse invoice_date as date
+    inv_date_dt = None
+    if invoice_date:
+        try:
+            inv_date_dt = datetime.strptime(invoice_date, "%Y-%m-%d").date()
+        except Exception:
+            inv_date_dt = None
+
+    if invoice_id:
+        inv = PurchaseInvoice.query.get(int(invoice_id))
+        if not inv:
+            return jsonify({"ok": False, "error": "Invoice not found"}), 404
+        inv.supplier_id = sup.id if sup else None
+        inv.supplier_name = None if sup else supplier_name
+        inv.invoice_date = invoice_date
+        inv.invoice_date_dt = inv_date_dt
+        inv.invoice_number = invoice_number
+        inv.currency = currency
+        inv.status = status
+        inv.uploaded_files = json.dumps(uploaded_files) if isinstance(uploaded_files, list) else (uploaded_files or None)
+    else:
+        inv = PurchaseInvoice(
+            supplier_id=sup.id if sup else None,
+            supplier_name=None if sup else supplier_name,
+            invoice_date=invoice_date,
+            invoice_date_dt=inv_date_dt,
+            invoice_number=invoice_number,
+            currency=currency,
+            status=status,
+            uploaded_files=json.dumps(uploaded_files) if isinstance(uploaded_files, list) else (uploaded_files or None),
+            created_by=current_user.id if current_user.is_authenticated else None,
+        )
+        db.session.add(inv)
+        db.session.flush()
+
+    # Upsert line items
+    subtotal = 0.0
+    existing_ids = set()
+    for li in lines:
+        try:
+            li_id = li.get("id")
+            desc = (li.get("description") or "").strip()
+            unit = (li.get("unit") or "").strip()
+            qty = float(li.get("qty") or 0)
+            unit_price = li.get("unit_price")
+            unit_price = float(unit_price) if unit_price not in (None, "",) else None
+            line_total = li.get("line_total")
+            line_total = float(line_total) if line_total not in (None, "",) else None
+        except Exception:
+            continue
+        if not desc or not unit or qty <= 0:
+            continue
+        if line_total is None and unit_price is not None:
+            line_total = unit_price * qty
+        if line_total is not None:
+            subtotal += float(line_total)
+
+        if li_id:
+            row = PurchaseLineItem.query.get(int(li_id))
+            if row and row.invoice_id == inv.id:
+                row.description = desc
+                row.category = (li.get("category") or None)
+                row.material_key = (li.get("material_key") or None)
+                row.unit = unit
+                row.quantity = qty
+                row.unit_price = unit_price
+                row.line_total = line_total
+                existing_ids.add(row.id)
+                continue
+        # create new
+        row = PurchaseLineItem(
+            invoice_id=inv.id,
+            description=desc,
+            category=(li.get("category") or None),
+            material_key=(li.get("material_key") or None),
+            unit=unit,
+            quantity=qty,
+            unit_price=unit_price,
+            line_total=line_total,
+        )
+        db.session.add(row)
+        db.session.flush()
+        existing_ids.add(row.id)
+
+    # Delete removed lines when updating
+    if invoice_id:
+        to_delete = PurchaseLineItem.query.filter(
+            PurchaseLineItem.invoice_id == inv.id,
+            ~PurchaseLineItem.id.in_(existing_ids)
+        ).all()
+        for d in to_delete:
+            db.session.delete(d)
+
+    tax = body.get("tax")
+    total = body.get("total")
+    try:
+        tax_f = float(tax) if tax not in (None, "",) else None
+    except (TypeError, ValueError):
+        tax_f = None
+    try:
+        total_f = float(total) if total not in (None, "",) else None
+    except (TypeError, ValueError):
+        total_f = None
+    if total_f is None:
+        total_f = subtotal + (tax_f or 0.0)
+
+    inv.subtotal = round(subtotal, 2)
+    inv.tax = round(tax_f or 0.0, 2)
+    inv.total = round(total_f, 2)
+
+    db.session.commit()
+    return jsonify({"ok": True, "id": inv.id})
 
 # Optional legacy address verification page
 @app.route("/verify-address", methods=["GET", "POST"])
@@ -797,6 +1655,14 @@ def health():
         "price_keys": len(PRICES),
         "import_error": _BA_IMPORT_ERROR,
         "prices_error": PRICES_ERROR,
+        "staff": bool(getattr(current_user, "is_staff", False)) if current_user.is_authenticated else False,
+        "endpoints": {
+            "purchases_extract": "/api/staff/purchases/extract",
+            "purchases_text": "/api/staff/purchases/ai-parse-text",
+            "purchases_save": "/api/staff/purchases",
+            "receipts_create": "/api/staff/receipts",
+            "receipt_print": "/staff/receipts/<id>/print",
+        }
     })
 
 @app.route("/api/chat", methods=["POST"])
@@ -939,6 +1805,72 @@ def me_location():
     db.session.commit()
     return jsonify({"ok": True, "distance_km": dist_km, "delivery_fee": fee})
 
+
+# --------------------------
+# Staff Sales (Billing) APIs
+# --------------------------
+
+@app.post("/api/staff/receipts")
+@staff_required
+def api_staff_create_receipt():
+    try:
+        body = request.get_json(force=True) or {}
+    except Exception as ex:
+        return jsonify({"ok": False, "error": f"Invalid JSON: {ex}"}), 400
+
+    customer_name = (body.get("customer_name") or "").strip() or None
+    lines = body.get("lines") or []
+    notes = (body.get("notes") or "").strip() or None
+    if not isinstance(lines, list) or not lines:
+        return jsonify({"ok": False, "error": "lines must be a non-empty list"}), 400
+
+    receipt = SalesReceipt(
+        customer_name=customer_name,
+        notes=notes,
+        created_by=current_user.id if current_user.is_authenticated else None,
+    )
+    db.session.add(receipt)
+    db.session.flush()
+
+    subtotal = 0.0
+    for li in lines:
+        try:
+            name = (li.get("item_name") or li.get("name") or "").strip()
+            unit = (li.get("unit") or "yd3").strip()
+            qty = float(li.get("quantity") or li.get("qty") or 0)
+            price = float(li.get("unit_price") or li.get("price") or 0)
+        except Exception:
+            continue
+        if not name or qty <= 0 or price < 0:
+            continue
+        line_total = qty * price
+        subtotal += line_total
+        db.session.add(SalesReceiptLine(
+            receipt_id=receipt.id,
+            item_name=name,
+            unit=unit,
+            quantity=qty,
+            unit_price=price,
+            line_total=line_total,
+            material_key=(li.get("material_key") or None),
+        ))
+
+    receipt.subtotal = round(subtotal, 2)
+    receipt.tax = 0.0
+    receipt.total = receipt.subtotal
+    # Simple receipt number
+    receipt.receipt_no = f"R{receipt.id:06d}"
+    db.session.commit()
+    return jsonify({"ok": True, "id": receipt.id, "receipt_no": receipt.receipt_no})
+
+
+@app.get("/staff/receipts/<int:rid>/print")
+@staff_required
+def staff_print_receipt(rid: int):
+    r = SalesReceipt.query.get_or_404(rid)
+    lines = SalesReceiptLine.query.filter_by(receipt_id=r.id).all()
+    return render_template("print_receipt.html", receipt=r, lines=lines)
+
 # --------------------------
 # Entrypoint
 # --------------------------
@@ -960,7 +1892,19 @@ def me_debug():
     
 if __name__ == "__main__":
     with app.app_context():
-        db.create_all()  # adds new nullable columns if they don't exist (SQLite will append)
+        db.create_all()  # creates any missing tables
+        # Best-effort: add missing 'is_staff' column for existing User (SQLite only)
+        try:
+            # SQLite pragma to introspect table; add column if missing
+            from sqlalchemy import text
+            cols = db.session.execute(text("PRAGMA table_info(user);")).fetchall()
+            col_names = {c[1] for c in cols} if cols else set()
+            if "is_staff" not in col_names and app.config["SQLALCHEMY_DATABASE_URI"].startswith("sqlite"):
+                db.session.execute(text("ALTER TABLE user ADD COLUMN is_staff BOOLEAN NOT NULL DEFAULT 0;"))
+                db.session.commit()
+        except Exception:
+            # ignore if db engine doesn't support or already exists
+            pass
     # Bind to 0.0.0.0 and respect PORT for hosting platforms (e.g., Railway)
     port = int(os.getenv("PORT", "5000"))
     host = os.getenv("HOST", "0.0.0.0")

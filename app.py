@@ -960,4 +960,8 @@ def me_debug():
 if __name__ == "__main__":
     with app.app_context():
         db.create_all()  # adds new nullable columns if they don't exist (SQLite will append)
-    app.run(debug=True)
+    # Bind to 0.0.0.0 and respect PORT for hosting platforms (e.g., Railway)
+    port = int(os.getenv("PORT", "5000"))
+    host = os.getenv("HOST", "0.0.0.0")
+    debug = str(os.getenv("FLASK_DEBUG", "1")).lower() in ("1", "true", "yes")
+    app.run(host=host, port=port, debug=debug)

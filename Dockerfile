@@ -28,6 +28,6 @@ ENV PYTHONUNBUFFERED=1 \
 # Expose port for Railway
 EXPOSE 8080
 
-# Start gunicorn
-CMD ["gunicorn", "-w", "2", "-k", "gthread", "-b", "0.0.0.0:${PORT}", "app:app"]
+# Start gunicorn (use shell so ${PORT} expands)
+CMD ["sh", "-c", "gunicorn -w 2 -k gthread -b 0.0.0.0:${PORT:-8080} app:app"]
 

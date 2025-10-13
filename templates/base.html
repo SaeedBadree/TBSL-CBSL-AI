@@ -71,6 +71,9 @@
     function populateCart() {
         const cartBody = document.getElementById('cart-body');
         const grandTotalElement = document.getElementById('grand-total');
+        if (!cartBody || !grandTotalElement) {
+            return; // Not on a page with cart UI
+        }
         cartBody.innerHTML = ''; // Clear table
     
         let grandTotal = 0;
@@ -107,8 +110,11 @@
     
     // Populate cart on page load
     document.addEventListener('DOMContentLoaded', () => {
-        populateCart();
-        console.log("Cart loaded:", cart);
+        // Only try to render cart if the elements exist on this page
+        if (document.getElementById('cart-body') && document.getElementById('grand-total')) {
+            populateCart();
+            console.log("Cart loaded:", cart);
+        }
     });
 </script>
 {% block page_styles %}{% endblock %}

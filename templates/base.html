@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Conserv Building Solutions{% endblock %}</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <!-- Navigation Bar -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <!-- Logo/Brand Name -->
+            <a href="{{ url_for('index') }}" class="brand">Conserv Building Solutions</a>
+    
+            <!-- Navigation Links -->
+            <div class="nav-links">
+                <a href="{{ url_for('buildadvisor') }}" class="{% if request.endpoint == 'buildadvisor' %}active{% endif %}">BuildAdvisor</a>
+                <a href="{{ url_for('index') }}" class="{% if request.endpoint == 'index' %}active{% endif %}">Home</a>
+                <a href="{{ url_for('products') }}" class="{% if request.endpoint == 'products' %}active{% endif %}">Products</a>
+                {% if current_user.is_authenticated %}
+                    <a href="{{ url_for('payment') }}" class="{% if request.endpoint == 'payment' %}active{% endif %}">Payment</a>
+                    <a href="{{ url_for('logout') }}" class="{% if request.endpoint == 'logout' %}active{% endif %}">Logout</a>
+                {% else %}
+                    <a href="{{ url_for('login') }}" class="{% if request.endpoint == 'login' %}active{% endif %}">Login</a>
+                    <a href="{{ url_for('signup') }}" class="{% if request.endpoint == 'signup' %}active{% endif %}">Sign Up</a>
+                {% endif %}
+
+            </div>
+    
+            <!-- Mobile Menu Toggle -->
+            <span class="menu-toggle" onclick="toggleMenu()">&#9776;</span>
+        </div>
+    </nav>
+
+    <!-- Main Content Block -->
+    <main>
+        {% block content %}
+        {% endblock %}
+    </main>
+
+    <!-- Footer -->
+    <footer>
+        <p>&copy; 2024 Conserv Building Solutions | Your Trusted Partner in Sustainable Building</p>
+    </footer>
+
+    <!-- JavaScript for Mobile Menu Toggle -->
+     <script>
+    const cart = JSON.parse(localStorage.getItem('cart')) || [];
+
+    function addToCart(productName, price, quantity) {
+        quantity = parseInt(quantity, 10);
+        if (isNaN(quantity) || quantity < 1) {
+            alert("Please select a valid quantity.");
+            return;
+        }
+    
+        const existingItem = cart.find(item => item.productName === productName);
+        if (existingItem) {
+            existingItem.quantity += quantity;
+        } else {
+            cart.push({ productName, price, quantity });
+        }
+    
+        localStorage.setItem('cart', JSON.stringify(cart));
+        alert(`${quantity} yard(s) of ${productName} added to cart.`);
+        console.log("Updated cart:", cart);
+    }
+    
+    function populateCart() {
+        const cartBody = document.getElementById('cart-body');
+        const grandTotalElement = document.getElementById('grand-total');
+        cartBody.innerHTML = ''; // Clear table
+    
+        let grandTotal = 0;
+    
+        cart.forEach(item => {
+            const row = document.createElement('tr');
+            const itemTotal = item.price * item.quantity;
+            grandTotal += itemTotal;
+    
+            row.innerHTML = `
+                <td>${item.productName}</td>
+                <td>$${item.price.toFixed(2)}</td>
+                <td>${item.quantity}</td>
+                <td>$${itemTotal.toFixed(2)}</td>
+            `;
+    
+            cartBody.appendChild(row);
+        });
+    
+        grandTotalElement.textContent = grandTotal.toFixed(2);
+        console.log("Grand total:", grandTotal);
+    }
+    
+    function placeOrder() {
+        if (cart.length === 0) {
+            alert("Your cart is empty.");
+            return;
+        }
+    
+        alert("Thank you for your purchase!");
+        localStorage.removeItem('cart');
+        window.location.href = '/';
+    }
+    
+    // Populate cart on page load
+    document.addEventListener('DOMContentLoaded', () => {
+        populateCart();
+        console.log("Cart loaded:", cart);
+    });
+</script>
+{% block page_styles %}{% endblock %}
+
+{% block page_scripts %}{% endblock %}
+</body>
+</html>

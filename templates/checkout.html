@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}Cart — Conserv{% endblock %}
+
+{% block content %}
+<h1 style="margin: 20px 0;">Checkout</h1>
+
+<section class="card cart-container">
+  <table class="cart-table" id="cart-table">
+    <thead>
+      <tr>
+        <th>Product</th>
+        <th>Price</th>
+        <th style="width:220px;">Quantity</th>
+        <th>Total</th>
+        <th style="width:90px;">Remove</th>
+      </tr>
+    </thead>
+    <tbody id="cart-body"></tbody>
+  </table>
+
+  <div class="cart-summary">
+    <p><strong>Grand Total:</strong> <span id="grand-total">$0.00</span></p>
+    <div style="display:flex; gap:10px; justify-content:flex-end;">
+      <button class="ghost" id="clear-cart">Clear Cart</button>
+      <button id="checkout-btn">Proceed to Payment</button>
+    </div>
+  </div>
+</section>
+
+<script>
+  // ------- cart state -------
+  let cart = JSON.parse(localStorage.getItem('cart') || '[]');
+
+  function saveCart() {
+    localStorage.setItem('cart', JSON.stringify(cart));
+  }
+
+  function fmt(n) { return '$' + Number(n).toFixed(2); }
+
+  function grandTotal() {
+    return cart.reduce((s, it) => s + Number(it.price) * Number(it.quantity), 0);
+  }
+
+  // ------- rendering -------
+  function renderCart() {
+    const tbody = document.getElementById('cart-body');
+    tbody.innerHTML = '';
+
+    cart.forEach((item, idx) => {
+      const tr = document.createElement('tr');
+      tr.dataset.index = idx;
+
+      const lineTotal = Number(item.price) * Number(item.quantity);
+
+      tr.innerHTML = `
+        <td>${item.productName}</td>
+        <td>${fmt(item.price)}</td>
+        <td>
+          <div class="table-qty">
+            <button class="qty-btn" data-action="dec" aria-label="decrease">−</button>
+            <input class="qty-input" type="number" min="0" step="1" value="${item.quantity}">
+            <button class="qty-btn" data-action="inc" aria-label="increase">+</button>
+          </div>
+        </td>
+        <td class="line-total">${fmt(lineTotal)}</td>
+        <td><button class="remove-btn" title="Remove">✕</button></td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    document.getElementById('grand-total').textContent = fmt(grandTotal());
+    bindRowEvents();
+  }
+
+  // ------- row interactions -------
+  function bindRowEvents() {
+    document.querySelectorAll('#cart-body tr').forEach(tr => {
+      const idx = Number(tr.dataset.index);
+      const minus = tr.querySelector('[data-action="dec"]');
+      const plus  = tr.querySelector('[data-action="inc"]');
+      const input = tr.querySelector('.qty-input');
+      const remove = tr.querySelector('.remove-btn');
+
+      minus.addEventListener('click', () => updateQty(idx, Number(input.value) - 1));
+      plus.addEventListener('click',  () => updateQty(idx, Number(input.value) + 1));
+      input.addEventListener('change', () => updateQty(idx, Number(input.value)));
+      remove.addEventListener('click', () => { cart.splice(idx, 1); saveCart(); renderCart(); });
+    });
+  }
+
+  function updateQty(idx, newQty) {
+    if (isNaN(newQty) || newQty < 0) newQty = 0;
+    if (newQty === 0) {
+      // remove item when set to 0
+      cart.splice(idx, 1);
+    } else {
+      cart[idx].quantity = Math.floor(newQty);
+    }
+    saveCart();
+    renderCart();
+  }
+
+  // ------- actions -------
+  document.getElementById('clear-cart').addEventListener('click', () => {
+    if (!cart.length) return;
+    if (confirm('Clear your cart?')) {
+      cart = [];
+      saveCart();
+      renderCart();
+    }
+  });
+
+  document.getElementById('checkout-btn').addEventListener('click', async () => {
+    if (!cart.length) {
+      alert('Your cart is empty.');
+      return;
+    }
+    try {
+      const resp = await fetch('{{ url_for("checkout") }}', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cart),
+      });
+
+      const data = await resp.json().catch(() => ({}));
+      if (data && data.ok && data.payment_url) {
+        window.location.href = data.payment_url;   // Go to WiPay
+        return;
+      }
+      alert(data.error || 'Unable to start payment.');
+    } catch (err) {
+      console.error(err);
+      alert('Network error starting payment.');
+    }
+  });
+
+  // initial render
+  renderCart();
+</script>
+{% endblock %}

@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+{% block title %}Checkout & Payment{% endblock %}
+{% block content %}
+
+<div class="card" style="max-width:1100px;margin:0 auto;">
+  <h2 style="margin-bottom:1rem;">Checkout & Payment</h2>
+
+  <p style="margin:.5rem 0 1rem 0;">
+    Deliver to:
+    {% if current_user.formatted_address %}
+      <strong>{{ current_user.formatted_address }}</strong>
+    {% else %}
+      <em>No saved address</em>
+    {% endif %}
+  </p>
+
+  <table class="cart-table">
+    <thead>
+      <tr>
+        <th>Item</th>
+        <th>Unit Price (TT$)</th>
+        <th style="width:220px;text-align:center;">Qty</th>
+        <th>Total (TT$)</th>
+        <th style="width:120px;">Action</th>
+      </tr>
+    </thead>
+    <tbody id="cart-body"></tbody>
+  </table>
+
+  <div id="delivery-note" class="muted" style="margin:12px 0;"></div>
+
+  <div style="display:flex;justify-content:flex-end;gap:18px;align-items:baseline;margin-top:12px;">
+    <div><strong>Subtotal:</strong> TT$ <span id="subtotal">0.00</span></div>
+    <div><strong>Delivery:</strong> TT$ <span id="delivery">0.00</span></div>
+    <div style="font-size:1.25rem;"><strong>Grand Total:</strong> TT$ <span id="grand">0.00</span></div>
+  </div>
+
+  <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;">
+    <button id="btn-pay">Proceed to Payment</button>
+    <button id="btn-clear" type="button" style="background:#334155;color:#fff;">Clear Cart</button>
+  </div>
+</div>
+
+<script>
+// ---------- Utilities ----------
+function money(n){ return (Number(n||0)).toFixed(2); }
+function readCart(){ try{ return JSON.parse(localStorage.getItem('cart')||'[]'); }catch{ return []; } }
+function writeCart(items){ localStorage.setItem('cart', JSON.stringify(items)); }
+
+// ---------- Current user info from server (Jinja-safe) ----------
+{% set me_dict = {
+  'has_address': (current_user.place_id is not none),
+  'address': (current_user.formatted_address or ''),
+  'lat': current_user.lat,
+  'lng': current_user.lng,
+  'distance_km': current_user.distance_km,
+  'delivery_fee': current_user.delivery_fee
+} %}
+const me = {{ me_dict | tojson }};
+
+// ---------- Render cart ----------
+const elBody = document.getElementById('cart-body');
+const elSub  = document.getElementById('subtotal');
+const elDel  = document.getElementById('delivery');
+const elTot  = document.getElementById('grand');
+const elNote = document.getElementById('delivery-note');
+
+function redraw(){
+  const cart = readCart();
+  elBody.innerHTML = '';
+  let subtotal = 0;
+
+  cart.forEach((item, idx) => {
+    const row = document.createElement('tr');
+
+    const unit = Number(item.price || 0);
+    const qty  = Number(item.quantity || 0);
+    const line = unit * qty;
+    subtotal += line;
+
+    row.innerHTML = `
+      <td>${item.productName}</td>
+      <td>${money(unit)}</td>
+      <td style="text-align:center;">
+        <div style="display:inline-flex; gap:6px; align-items:center;">
+          <button class="qty-minus" data-i="${idx}" type="button">-</button>
+          <span style="min-width:32px; display:inline-block; text-align:center;">${qty}</span>
+          <button class="qty-plus" data-i="${idx}" type="button">+</button>
+        </div>
+      </td>
+      <td>${money(line)}</td>
+      <td>
+        <button class="rm" data-i="${idx}" type="button" style="background:#1e3a8a;color:#fff;">Remove</button>
+      </td>
+    `;
+    elBody.appendChild(row);
+  });
+
+  // delivery
+  let delivery = 0;
+  if (me.has_address && me.delivery_fee != null){
+    delivery = Number(me.delivery_fee || 0);
+    elNote.textContent = `Distance: ${me.distance_km != null ? me.distance_km.toFixed(1) : '—'} km · Delivery fee uses your saved address.`;
+  }else{
+    elNote.textContent = 'No saved delivery location. Sign up again with a verified address to enable delivery pricing.';
+  }
+
+  const grand = subtotal + delivery;
+  elSub.textContent = money(subtotal);
+  elDel.textContent = money(delivery);
+  elTot.textContent = money(grand);
+}
+redraw();
+
+// ---------- Events ----------
+elBody.addEventListener('click', (e) => {
+  const tgt = e.target;
+  if (tgt.classList.contains('qty-minus') || tgt.classList.contains('qty-plus')){
+    const i = Number(tgt.dataset.i);
+    const cart = readCart();
+    const it = cart[i]; if (!it) return;
+    let q = Number(it.quantity || 0);
+    q += tgt.classList.contains('qty-plus') ? 1 : -1;
+    if (q < 1) q = 1;
+    it.quantity = q;
+    writeCart(cart);
+    redraw();
+  }
+  if (tgt.classList.contains('rm')){
+    const i = Number(tgt.dataset.i);
+    const cart = readCart();
+    cart.splice(i,1);
+    writeCart(cart);
+    redraw();
+  }
+});
+
+document.getElementById('btn-clear').addEventListener('click', () => {
+  localStorage.removeItem('cart');
+  redraw();
+});
+
+document.getElementById('btn-pay').addEventListener('click', async () => {
+  const cart = readCart();
+  if (!cart.length){ alert('Your cart is empty.'); return; }
+  try{
+    const r = await fetch('{{ url_for("checkout") }}', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(cart)
+    });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'Checkout failed');
+    // send to WiPay hosted payment page
+    window.location.href = j.payment_url;
+  }catch(err){
+    console.error(err);
+    alert('Payment start failed: ' + err.message);
+  }
+});
+</script>
+{% endblock %}

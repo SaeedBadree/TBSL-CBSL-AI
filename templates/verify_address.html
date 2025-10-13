@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Verify Your Address</h2>
+<form method="POST" action="/verify-address">
+    <label for="address">Enter Address:</label>
+    <input type="text" id="address" name="address" placeholder="Enter your address" required>
+    <button type="submit">Verify Address</button>
+</form>
+
+{% if address %}
+<div id="map"></div>
+<p><strong>Verified Address:</strong> {{ address }}</p>
+<p><strong>Latitude:</strong> {{ lat }}</p>
+<p><strong>Longitude:</strong> {{ lng }}</p>
+<script>
+    function initMap() {
+        const location = {
+            lat: parseFloat("{{ lat }}"),
+            lng: parseFloat("{{ lng }}")
+        };
+
+        const map = new google.maps.Map(document.getElementById('map'), {
+            zoom: 15,
+            center: location,
+        });
+
+        new google.maps.Marker({
+            position: location,
+            map: map,
+        });
+    }
+</script>
+<script async defer
+    src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&callback=initMap">
+</script>
+{% endif %}
+{% endblock %}

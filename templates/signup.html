@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% block title %}Sign Up{% endblock %}
+
+{% block content %}
+
+<style>
+  /* Make the Google Places dropdown render above your UI */
+  .pac-container { z-index: 10000 !important; }
+</style>
+
+<div class="auth-card card">
+  <h2>Create your account</h2>
+
+  {# Flash messages, if your base doesn't already show them #}
+  {% if get_flashed_messages(with_categories=true) %}
+    <div class="flashes">
+      {% for cat, msg in get_flashed_messages(with_categories=true) %}
+        <div class="flash {{ cat }}">{{ msg }}</div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  <form method="post" action="{{ url_for('signup') }}" class="form-grid">
+    <label>Username
+      <input type="text" name="username"
+             value="{{ request.form.get('username','') }}"
+             required>
+    </label>
+
+    <label>Email
+      <input type="email" name="email"
+             value="{{ request.form.get('email','') }}"
+             required>
+    </label>
+
+    <div class="grid-2">
+      <label>Password
+        <input type="password" name="password" required>
+      </label>
+      <label>Confirm Password
+        <input type="password" name="password2" required>
+      </label>
+    </div>
+
+    <label>Age
+      <input type="number" name="age" min="13" max="120"
+             value="{{ request.form.get('age','') }}">
+    </label>
+
+    <label>Address (Google verified)
+      <input id="addr-input"
+             type="text"
+             name="address"
+             placeholder="Start typing your address…"
+             autocomplete="off"
+             spellcheck="false"
+             value="{{ request.form.get('address','') }}"
+             required>
+      <small id="addr-status" class="muted">
+        {% if request.form.get('place_id') %}Verified ✓{% else %}Not verified{% endif %}
+      </small>
+    </label>
+
+    <!-- hidden fields populated by Places -->
+    <input type="hidden" id="place_id"            name="place_id"            value="{{ request.form.get('place_id','') }}">
+    <input type="hidden" id="formatted_address"   name="formatted_address"   value="{{ request.form.get('formatted_address','') }}">
+    <input type="hidden" id="lat"                 name="lat"                 value="{{ request.form.get('lat','') }}">
+    <input type="hidden" id="lng"                 name="lng"                 value="{{ request.form.get('lng','') }}">
+
+    <!-- Optional: tiny map preview -->
+    <div id="signup-map" style="height:260px;border:1px solid #213055;border-radius:10px;margin:8px 0 12px;"></div>
+
+    <button type="submit">Create Account</button>
+
+    {% if not GOOGLE_MAPS_API_KEY %}
+      <p class="muted" style="margin-top:.75rem">
+        <strong>Note:</strong> <code>GOOGLE_MAPS_API_KEY</code> isn’t set, so the address picker won’t load.
+      </p>
+    {% endif %}
+  </form>
+</div>
+
+<script>
+  // Build a safe default center from Jinja (avoids the "default:" filter issue)
+  const CENTER = {{ {
+    'lat': (BASE_LAT if BASE_LAT is defined else 10.5),
+    'lng': (BASE_LNG if BASE_LNG is defined else -61.3)
+  } | tojson }};
+
+  // Expose the callback globally so Google can call it
+  window.initSignupMap = function () {
+    const input  = document.getElementById('addr-input');
+    const status = document.getElementById('addr-status');
+
+    if (!input || !(window.google && google.maps && google.maps.places)) {
+      console.warn('Google Places API not available.');
+      if (status) status.textContent = 'Not verified';
+      return;
+    }
+
+    const ac = new google.maps.places.Autocomplete(input, {
+      fields: ['place_id','formatted_address','geometry']
+    });
+
+    // Optional map preview
+    const mapEl = document.getElementById('signup-map');
+    let map, marker;
+    if (mapEl) {
+      map   = new google.maps.Map(mapEl, { center: CENTER, zoom: 10, mapTypeControl: false });
+      marker= new google.maps.Marker({ map, position: CENTER });
+    }
+
+    ac.addListener('place_changed', () => {
+      const place = ac.getPlace();
+      const loc   = place?.geometry?.location;
+      if (!place || !loc) {
+        if (status) status.textContent = 'Not verified';
+        return;
+      }
+
+      const lat = loc.lat(), lng = loc.lng();
+
+      document.getElementById('place_id').value          = place.place_id || '';
+      document.getElementById('formatted_address').value = place.formatted_address || input.value;
+      document.getElementById('lat').value               = lat;
+      document.getElementById('lng').value               = lng;
+      if (status) status.textContent = 'Verified ✓';
+
+      if (map && marker) {
+        marker.setPosition({lat, lng});
+        map.setCenter({lat, lng});
+        map.setZoom(14);
+      }
+    });
+  };
+</script>
+
+<!-- Load Google Maps JS with your **browser** key, the Places library, and our callback -->
+<script defer
+  src="https://maps.googleapis.com/maps/api/js?key={{ GOOGLE_MAPS_API_KEY }}&libraries=places&callback=initSignupMap">
+</script>
+
+{% endblock %}

@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Success{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>Thank you! Your payment was successful.</h2>
+  {% if purchase %}
+    <p><strong>Order #{{ purchase.id }}</strong></p>
+    <ul>
+      {% for it in purchase.items_json|tojson|loads %}
+        <li>{{ it.productName }} × {{ it.quantity }} — ${{ '%.2f'|format(it.price) }}</li>
+      {% endfor %}
+    </ul>
+    <p>Items: ${{ '%.2f'|format(purchase.items_total) }}</p>
+    <p>Delivery ({{ '%.1f'|format(purchase.delivery_km or 0) }} km): ${{ '%.2f'|format(purchase.delivery_fee or 0) }}</p>
+    <p><strong>Grand Total: ${{ '%.2f'|format(purchase.grand_total) }}</strong></p>
+  {% endif %}
+</div>
+{% endblock %}

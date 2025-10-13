@@ -48,52 +48,6 @@
 </main>
 
 
-
-<h2 class="text-center">Our Products</h2>
-<div class="product-container">
-    <!-- Sand -->
-    <div class="product-card">
-        <img src="/static/images/sand-placeholder.jpg" alt="Sand">
-        <h3>Sand</h3>
-        <p>Price: $240.00 per yard</p>
-        <div class="quantity-selector">
-            <label for="sand-quantity">Qty:</label>
-            <input type="number" id="sand-quantity" name="sand_quantity" min="1" value="1" oninput="updateTotal('sand-total', 240, this.value)">
-        </div>
-        <p>Total: $<span id="sand-total">240.00</span></p>
-        <button type="button" onclick="addToCart('Sand', 240, document.getElementById('sand-quantity').value)">Add to Cart</button>
-    </div>
-
-    <!-- Gravel -->
-    <div class="product-card">
-        <img src="/static/images/gravel-placeholder.jpg" alt="Gravel">
-        <h3>Gravel</h3>
-        <p>Price: $350.00 per yard</p>
-        <div class="quantity-selector">
-            <label for="gravel-quantity">Qty:</label>
-            <input type="number" id="gravel-quantity" name="gravel_quantity" min="1" value="1" oninput="updateTotal('gravel-total', 350, this.value)">
-        </div>
-        <p>Total: $<span id="gravel-total">350.00</span></p>
-        <button type="button" onclick="addToCart('Gravel', 350, document.getElementById('gravel-quantity').value)">Add to Cart</button>
-    </div>
-
-    <!-- Sharp Sand -->
-    <div class="product-card">
-        <img src="/static/images/sharp-sand-placeholder.jpg" alt="Sharp Sand">
-        <h3>Sharp Sand</h3>
-        <p>Price: $400.00 per yard</p>
-        <div class="quantity-selector">
-            <label for="sharp-sand-quantity">Qty:</label>
-            <input type="number" id="sharp-sand-quantity" name="sharp_sand_quantity" min="1" value="1" oninput="updateTotal('sharp-sand-total', 400, this.value)">
-        </div>
-        <p>Total: $<span id="sharp-sand-total">400.00</span></p>
-        <button type="button" onclick="addToCart('Sharp Sand', 400, document.getElementById('sharp-sand-quantity').value)">Add to Cart</button>
-    </div>
-</div>
-<div class="text-center">
-    <a href="/checkout" class="view-products-button">Go to Checkout</a>
-</div>
-
 <!-- Slideshow Script -->
 <script>
     // Simple JavaScript for slideshow functionality

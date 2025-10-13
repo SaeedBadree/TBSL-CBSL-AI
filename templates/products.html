@@ -1,46 +1,179 @@
 {% extends "base.html" %}
 
+{% block title %}Products | Conserv Building Solutions{% endblock %}
+
 {% block content %}
-<h2 class="text-center">Detailed Products</h2>
-<div class="detailed-products-container">
-    <!-- Sand -->
-    <div class="detailed-product">
-        <img src="/static/images/sand-placeholder.jpg" alt="Sand" class="detailed-product-image">
-        <h3>Sand</h3>
-        <p>Sand is a versatile aggregate used in construction for making concrete, mortar, and filling. It is essential for laying foundations and achieving a smooth finish in plastering.</p>
-        <p><strong>Price:</strong> $240.00 per yard</p>
+  <section class="products-hero card">
+    <div class="hero-copy">
+      <h1>Premium Aggregates, Delivered Fast</h1>
+      <p>Transparent pricing per yard. Reliable delivery from a local partner.</p>
+      <ul class="hero-benefits">
+        <li>Next‑day delivery in service area</li>
+        <li>Priced per yard with no surprises</li>
+        <li>Engineered for driveways, slabs, and landscaping</li>
+      </ul>
+      <a class="btn" href="{{ url_for('payment') }}">Go to Checkout</a>
     </div>
+  </section>
+
+  <section class="products-grid" aria-label="Available products">
+    <!-- Sand -->
+    <article class="product-card" data-name="Sand" data-price="240">
+      <img loading="lazy" src="/static/images/sand-placeholder.jpg" alt="Sand aggregate" class="product-image"/>
+      <h3>Sand</h3>
+      <p class="desc">Versatile for concrete, mortar, and plaster finish.</p>
+      <p class="price">$240.00 <span class="unit">per yard</span></p>
+      <div class="quantity-selector">
+        <button class="qty-dec" type="button" aria-label="Decrease">−</button>
+        <input class="qty" type="number" min="1" value="1" inputmode="numeric"/>
+        <button class="qty-inc" type="button" aria-label="Increase">+</button>
+      </div>
+      <button class="btn add" type="button">Add to cart</button>
+    </article>
 
     <!-- Gravel -->
-    <div class="detailed-product">
-        <img src="/static/images/gravel-placeholder.jpg" alt="Gravel" class="detailed-product-image">
-        <h3>Gravel</h3>
-        <p>Gravel is widely used in construction, especially for creating a stable base for roads, driveways, and walkways. It ensures proper drainage and is also used in landscaping.</p>
-        <p><strong>Price:</strong> $350.00 per yard</p>
-    </div>
+    <article class="product-card" data-name="Gravel" data-price="350">
+      <img loading="lazy" src="/static/images/gravel-placeholder.jpg" alt="Gravel aggregate" class="product-image"/>
+      <h3>Gravel</h3>
+      <p class="desc">Stable base for roads, driveways, walkways; great drainage.</p>
+      <p class="price">$350.00 <span class="unit">per yard</span></p>
+      <div class="quantity-selector">
+        <button class="qty-dec" type="button" aria-label="Decrease">−</button>
+        <input class="qty" type="number" min="1" value="1" inputmode="numeric"/>
+        <button class="qty-inc" type="button" aria-label="Increase">+</button>
+      </div>
+      <button class="btn add" type="button">Add to cart</button>
+    </article>
 
     <!-- Sharp Sand -->
-    <div class="detailed-product">
-        <img src="/static/images/sharp-sand-placeholder.jpg" alt="Sharp Sand" class="detailed-product-image">
-        <h3>Sharp Sand</h3>
-        <p>Sharp sand is commonly used in screeding and paving. Its coarser particles make it suitable for applications where a more robust finish is needed, such as block paving.</p>
-        <p><strong>Price:</strong> $400.00 per yard</p>
-    </div>
+    <article class="product-card" data-name="Sharp Sand" data-price="400">
+      <img loading="lazy" src="/static/images/sharp-sand-placeholder.jpg" alt="Sharp sand aggregate" class="product-image"/>
+      <h3>Sharp Sand</h3>
+      <p class="desc">Ideal for screeding and paving with a robust finish.</p>
+      <p class="price">$400.00 <span class="unit">per yard</span></p>
+      <div class="quantity-selector">
+        <button class="qty-dec" type="button" aria-label="Decrease">−</button>
+        <input class="qty" type="number" min="1" value="1" inputmode="numeric"/>
+        <button class="qty-inc" type="button" aria-label="Increase">+</button>
+      </div>
+      <button class="btn add" type="button">Add to cart</button>
+    </article>
 
-    <!-- Oil Sand (Coming Soon) -->
-    <div class="detailed-product coming-soon">
-        <img src="/static/images/oil-sand-placeholder.jpg" alt="Oil Sand" class="detailed-product-image">
-        <h3>Oil Sand</h3>
-        <p>Oil sand, also known as tar sand, is a mixture of sand, clay, water, and bitumen. While its primary use is in bitumen extraction for fuel, it can have specialized applications in construction.</p>
-        <p><em>Coming Soon</em></p>
-    </div>
+    <!-- Oil Sand (Coming soon) -->
+    <article class="product-card coming" aria-disabled="true">
+      <img loading="lazy" src="/static/images/bobcat2.jpg" alt="Oil sand (coming soon)" class="product-image"/>
+      <div class="badge">Coming soon</div>
+      <h3>Oil Sand</h3>
+      <p class="desc">Specialized applications; pricing incoming.</p>
+      <button class="btn" type="button" disabled>Notify me</button>
+    </article>
 
-    <!-- Crush Run (Coming Soon) -->
-    <div class="detailed-product coming-soon">
-        <img src="/static/images/crush-run-placeholder.jpg" alt="Crush Run" class="detailed-product-image">
-        <h3>Crush Run</h3>
-        <p>Crush run, also called crusher run, is a compactable aggregate ideal for driveways and as a base layer in paving. Its blend of stone and dust ensures stability and durability.</p>
-        <p><em>Coming Soon</em></p>
+    <!-- Crush Run (Coming soon) -->
+    <article class="product-card coming" aria-disabled="true">
+      <img loading="lazy" src="/static/images/bobcat2.jpg" alt="Crush run (coming soon)" class="product-image"/>
+      <div class="badge">Coming soon</div>
+      <h3>Crush Run</h3>
+      <p class="desc">Compactable base blend for durable driveways.</p>
+      <button class="btn" type="button" disabled>Notify me</button>
+    </article>
+  </section>
+
+  <!-- Sticky CTA -->
+  <aside class="sticky-cta" role="region" aria-live="polite">
+    <div class="cta-inner">
+      <span class="cta-summary"><strong><span id="cta-count">0</span> item(s)</strong> · $<span id="cta-total">0.00</span></span>
+      <a class="btn" href="{{ url_for('payment') }}" id="cta-checkout" aria-disabled="true">Checkout</a>
     </div>
-</div>
+  </aside>
+{% endblock %}
+
+{% block page_styles %}
+<style>
+/***** Page-specific styling *****/
+.products-hero{ display:grid; grid-template-columns:1.1fr .9fr; gap:24px; align-items:center; padding:28px; background:linear-gradient(135deg, var(--panel), rgba(17,26,43,.6)); border:1px solid var(--border); border-radius:16px; }
+.products-hero .hero-copy h1{ color:#dbe6ff; font-size:2rem; margin-bottom:8px; }
+.products-hero .hero-copy p{ color:var(--muted); margin-bottom:12px; }
+.hero-benefits{ list-style:none; display:grid; gap:6px; margin:12px 0 16px; color:#c7d3ff; }
+.hero-benefits li::before{ content:"✓ "; color:var(--accent); }
+
+.products-grid{ display:grid; grid-template-columns:repeat(auto-fit, minmax(240px,1fr)); gap:20px; margin-top:20px; }
+.product-card{ position:relative; background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:14px; text-align:center; transition:transform .2s ease, box-shadow .2s ease; }
+.product-card:hover{ transform:translateY(-3px); box-shadow:0 6px 14px rgba(0,0,0,.25); }
+.product-card .product-image{ width:100%; height:156px; object-fit:cover; border-radius:10px; border:1px solid var(--border); margin-bottom:10px; }
+.product-card h3{ color:#e6ebff; margin-bottom:6px; }
+.product-card .desc{ color:var(--muted); min-height:38px; }
+.product-card .price{ color:#e6ebff; font-weight:800; margin:8px 0; }
+.product-card .unit{ color:var(--muted); font-weight:600; }
+.quantity-selector{ display:flex; justify-content:center; align-items:center; gap:8px; margin:8px 0 12px; }
+.quantity-selector .qty{ width:64px; text-align:center; background:var(--panel-2); color:var(--text); border:1px solid #2a3a63; border-radius:8px; padding:6px; }
+.quantity-selector button{ background:#213055; color:#e9edf5; border:1px solid #2a3a63; width:32px; height:32px; border-radius:8px; font-size:18px; cursor:pointer; }
+
+.product-card.coming{ opacity:.7; }
+.product-card .badge{ position:absolute; top:12px; left:12px; background:#3a2; color:#efe; border-radius:10px; padding:4px 8px; font-size:.8rem; }
+
+.sticky-cta{ position:sticky; bottom:12px; margin-top:24px; }
+.sticky-cta .cta-inner{ display:flex; justify-content:space-between; align-items:center; gap:12px; background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:12px 14px; box-shadow:0 8px 24px rgba(0,0,0,.35); }
+#cta-checkout[aria-disabled="true"]{ pointer-events:none; filter:grayscale(.2); opacity:.6; }
+
+@media (max-width: 768px){ .products-hero{ grid-template-columns:1fr; } }
+</style>
+{% endblock %}
+
+{% block page_scripts %}
+<script>
+(function(){
+  const select = (root, sel) => root.querySelector(sel);
+  const $$ = (sel, root=document) => Array.from(root.querySelectorAll(sel));
+
+  function clampQty(n){ n = parseInt(n, 10); return isNaN(n) || n < 1 ? 1 : n; }
+  function getCart(){ try{ return JSON.parse(localStorage.getItem('cart')) || []; }catch(e){ return []; } }
+  function setCta(count, total){
+    const countEl = document.getElementById('cta-count');
+    const totalEl = document.getElementById('cta-total');
+    const btn = document.getElementById('cta-checkout');
+    if(!countEl||!totalEl||!btn) return;
+    countEl.textContent = String(count);
+    totalEl.textContent = (Number(total)||0).toFixed(2);
+    btn.setAttribute('aria-disabled', count > 0 ? 'false' : 'true');
+  }
+  function computeSummary(){
+    const items = getCart();
+    let count = 0, total = 0;
+    items.forEach(i => { count += Number(i.quantity||0); total += Number(i.price||0) * Number(i.quantity||0); });
+    setCta(count, total);
+  }
+
+  // Bind quantity controls and add-to-cart
+  function bindCards(){
+    $$('.product-card').forEach(card => {
+      const qtyInput = select(card, '.qty');
+      const inc = select(card, '.qty-inc');
+      const dec = select(card, '.qty-dec');
+      const addBtn = select(card, '.add');
+      if(qtyInput){ qtyInput.addEventListener('change', () => qtyInput.value = clampQty(qtyInput.value)); }
+      if(inc){ inc.addEventListener('click', () => qtyInput.value = clampQty(Number(qtyInput.value||1) + 1)); }
+      if(dec){ dec.addEventListener('click', () => qtyInput.value = clampQty(Number(qtyInput.value||1) - 1)); }
+      if(addBtn){
+        addBtn.addEventListener('click', () => {
+          const name = card.getAttribute('data-name');
+          const price = Number(card.getAttribute('data-price'));
+          const qty = clampQty(qtyInput ? qtyInput.value : 1);
+          if(typeof window.addToCart === 'function'){
+            window.addToCart(String(name||''), Number(price||0), Number(qty||1));
+            computeSummary();
+          }
+        });
+      }
+    });
+  }
+
+  // Also wrap addToCart to update CTA if used elsewhere
+  if (typeof window.addToCart === 'function') {
+    const _orig = window.addToCart;
+    window.addToCart = function(n,p,q){ const r = _orig(n,p,q); try{ computeSummary(); }catch(_){} return r; };
+  }
+
+  document.addEventListener('DOMContentLoaded', function(){ bindCards(); computeSummary(); });
+})();
+</script>
 {% endblock %}

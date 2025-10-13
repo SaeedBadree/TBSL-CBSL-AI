@@ -11,8 +11,9 @@ from urllib.parse import urlparse, urljoin
 import requests
 from dotenv import load_dotenv
 from flask import (
-    Flask, render_template, request, redirect, url_for, jsonify, flash
+    Flask, render_template, request, redirect, url_for, jsonify, flash, send_from_directory
 )
+from werkzeug.utils import secure_filename
 from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
 from flask_login import (
@@ -42,6 +43,20 @@ app = Flask(__name__)
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "supersecretkey")
 app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("DATABASE_URL", "sqlite:///database.db")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
+# --------------------------
+# Uploads configuration
+# --------------------------
+app.config["UPLOAD_FOLDER"] = os.getenv("UPLOAD_FOLDER", "uploads")
+app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("MAX_CONTENT_LENGTH", 25 * 1024 * 1024))  # 25 MB
+
+ALLOWED_EXTS = {"png", "jpg", "jpeg", "webp", "gif", "pdf"}
+
+def _allowed_file(filename: str) -> bool:
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTS
+
+# Ensure upload folder exists at startup
+os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 
 db = SQLAlchemy(app)
 bcrypt = Bcrypt(app)
@@ -173,7 +188,7 @@ except Exception as e:
     log.exception(_BA_IMPORT_ERROR)
 
 try:
-    from ai_text import propose_bom_with_ai, expand_steps_with_ai
+    from ai_text import propose_bom_with_ai, expand_steps_with_ai, propose_bom_from_vision
 except Exception as e:
     _BA_IMPORT_ERROR = (_BA_IMPORT_ERROR + " | " if _BA_IMPORT_ERROR else "") + f"Import error in ai_text: {e}"
     log.exception("AI import error", exc_info=True)
@@ -318,6 +333,14 @@ def handle_500(e):
         return jsonify({"ok": False, "error": "Server error"}), 500
     tpl = os.path.join("templates","500.html")
     return (render_template("500.html"), 500) if os.path.exists(tpl) else ("Server error", 500)
+
+# --------------------------
+# File serving (uploads)
+# --------------------------
+@app.route("/uploads/<path:filename>")
+def serve_upload(filename: str):
+    # Note: do not list directories; only serve files inside UPLOAD_FOLDER
+    return send_from_directory(app.config["UPLOAD_FOLDER"], filename, as_attachment=False)
 
 # --------------------------
 # Auth helpers & routes
@@ -505,6 +528,47 @@ def index():
 @app.route("/products")
 def products():
     return render_template("products.html")
+
+@app.route("/upload")
+def upload_page():
+    return render_template("upload.html")
+
+# --------------------------
+# Upload API
+# --------------------------
+@app.post("/api/uploads")
+def api_uploads():
+    if "file" not in request.files:
+        return jsonify({"ok": False, "error": "No file part"}), 400
+
+    files = request.files.getlist("file")
+    if not files:
+        return jsonify({"ok": False, "error": "No files uploaded"}), 400
+
+    saved = []
+    for f in files:
+        if not f or not f.filename:
+            continue
+        if not _allowed_file(f.filename):
+            return jsonify({"ok": False, "error": f"Unsupported file type: {f.filename}"}), 400
+        fname = secure_filename(f.filename)
+        # Disambiguate duplicate names by prefixing timestamp
+        unique_name = f"{int(_time.time()*1000)}_{fname}"
+        path = os.path.join(app.config["UPLOAD_FOLDER"], unique_name)
+        f.save(path)
+
+        ext = unique_name.rsplit(".", 1)[-1].lower()
+        saved.append({
+            "id": unique_name,
+            "filename": unique_name,
+            "ext": ext,
+            "url": url_for("serve_upload", filename=unique_name, _external=False)
+        })
+
+    if not saved:
+        return jsonify({"ok": False, "error": "Nothing saved"}), 400
+
+    return jsonify({"ok": True, "files": saved})
 
 # Optional legacy address verification page
 @app.route("/verify-address", methods=["GET", "POST"])
@@ -784,6 +848,56 @@ def api_chat():
 @app.route("/buildadvisor")
 def buildadvisor():
     return render_template("buildadvisor.html")
+
+# --------------------------
+# BOM extraction from uploads (Vision)
+# --------------------------
+@app.post("/api/bom/extract")
+def api_bom_extract():
+    try:
+        body = request.get_json(force=True, silent=False) or {}
+    except Exception as ex:
+        return jsonify({"ok": False, "error": f"Invalid JSON: {ex}"}), 400
+
+    file_ids = body.get("file_ids") or []
+    spec = body.get("spec") or {}
+    if not isinstance(file_ids, list) or not file_ids:
+        return jsonify({"ok": False, "error": "file_ids must be a non-empty list"}), 400
+
+    if _BA_IMPORT_ERROR:
+        return jsonify({"ok": False, "error": _BA_IMPORT_ERROR}), 500
+    if PRICES_ERROR:
+        return jsonify({"ok": False, "error": PRICES_ERROR}), 500
+    if not OPENAI_API_KEY:
+        return jsonify({"ok": False, "error": "OPENAI_API_KEY is not set"}), 500
+
+    # Resolve paths inside UPLOAD_FOLDER and ensure files exist
+    paths = []
+    for fid in file_ids:
+        # Prevent escaping upload dir
+        fname = secure_filename(str(fid))
+        path = os.path.join(app.config["UPLOAD_FOLDER"], fname)
+        if not os.path.isfile(path):
+            return jsonify({"ok": False, "error": f"File not found: {fid}"}), 400
+        paths.append(path)
+
+    ai_bom = propose_bom_from_vision(paths, spec)
+    if not isinstance(ai_bom, dict) or not isinstance(ai_bom.get("lines"), list):
+        return jsonify({"ok": False, "error": "Vision extraction failed"}), 502
+
+    priced = price_bom_lines(ai_bom["lines"], PRICES)
+    default_text = "Here’s the step-by-step plan and a materials summary."
+    narrative = expand_steps_with_ai("Document analysis", spec, priced, default_text)
+    if not isinstance(narrative, str):
+        narrative = default_text
+
+    return jsonify({
+        "ok": True,
+        "assistant": narrative,
+        "spec": spec,
+        "estimate": priced,
+        "ai_notes": ai_bom.get("notes", "")
+    })
 
 @app.post("/api/me/recompute")
 @login_required

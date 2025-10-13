@@ -1,6 +1,7 @@
 # ai_text.py
 import os
 import json
+import base64
 import logging
 from typing import Dict, Any, List, Optional
 
@@ -42,11 +43,71 @@ def _make_client() -> Optional[OpenAI]:
 
     proxy = os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY")
     if proxy:
-        http_client = httpx.Client(proxies=proxy, timeout=30.0)
+        http_client = httpx.Client(proxies=proxy, timeout=60.0)
     else:
-        http_client = httpx.Client(timeout=30.0)
+        http_client = httpx.Client(timeout=60.0)
 
     return OpenAI(api_key=key, http_client=http_client)
+
+
+def _get_model_sequence(kind: str) -> List[str]:
+    """Return primary model followed by fallback candidates for the given kind.
+    kind: "text" | "vision"
+    Can be overridden by env OPENAI_MODEL and OPENAI_MODEL_FALLBACKS (comma-separated).
+    """
+    primary = os.getenv("OPENAI_MODEL", MODEL)
+    fallbacks_env = os.getenv("OPENAI_MODEL_FALLBACKS", "").strip()
+
+    if fallbacks_env:
+        candidates = [m.strip() for m in fallbacks_env.split(",") if m.strip()]
+    else:
+        if kind == "vision":
+            # Vision-capable default candidates
+            candidates = ["gpt-4o-mini", "gpt-4o"]
+        else:
+            # General text candidates
+            candidates = ["gpt-4o-mini", "gpt-4o"]
+
+    # Ensure primary is first and de-duplicate while preserving order
+    sequence: List[str] = []
+    for m in [primary] + candidates:
+        if m and m not in sequence:
+            sequence.append(m)
+    return sequence
+
+
+def _chat_completion_with_fallback(
+    client: OpenAI,
+    *,
+    messages: List[Dict[str, Any]],
+    response_format: Optional[Dict[str, Any]] = None,
+    timeout: float = 60.0,
+    model_kind: str = "text",
+):
+    """Try primary model then fallbacks until one succeeds, else re-raise last error."""
+    last_err: Optional[BaseException] = None
+    for model_name in _get_model_sequence(model_kind):
+        try:
+            if response_format is not None:
+                return client.chat.completions.create(
+                    model=model_name,
+                    response_format=response_format,
+                    messages=messages,
+                    timeout=timeout,
+                )
+            else:
+                return client.chat.completions.create(
+                    model=model_name,
+                    messages=messages,
+                    timeout=timeout,
+                )
+        except Exception as e:  # API errors: BadRequestError, RateLimitError, etc.
+            log.warning("Model %s failed: %s", model_name, e)
+            last_err = e
+            continue
+    if last_err is not None:
+        raise last_err
+    raise RuntimeError("No model candidates available for completion")
 
 def _norm_unit(u: str) -> str:
     """Normalize unit strings to our canonical set."""
@@ -137,15 +198,15 @@ def propose_bom_with_ai(prompt: str, spec: dict) -> dict:
     )
 
     try:
-        resp = client.chat.completions.create(
-            model=MODEL,
-            # This asks the model to emit a JSON object (no code fences, etc.)
+        resp = _chat_completion_with_fallback(
+            client,
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            temperature=0.2,
+            timeout=60.0,
+            model_kind="text",
         )
         content = (resp.choices[0].message.content or "").strip()
         data = json.loads(content)  # should already be a JSON object due to response_format
@@ -180,16 +241,150 @@ def expand_steps_with_ai(prompt: str, spec: dict, estimate: dict, default_text: 
     )
 
     try:
-        resp = client.chat.completions.create(
-            model=MODEL,
+        resp = _chat_completion_with_fallback(
+            client,
             messages=[
                 {"role": "system", "content": sys_msg},
                 {"role": "user", "content": user_msg},
             ],
-            temperature=0.3,
+            timeout=60.0,
+            model_kind="text",
         )
         text = (resp.choices[0].message.content or "").strip()
         return text or default_text
     except Exception as e:
         log.exception("expand_steps_with_ai failed: %s", e)
         return default_text
+
+
+# --------------------------
+# Vision (images/PDF → BOM)
+# --------------------------
+def _file_to_data_url(image_path: str) -> Optional[str]:
+    try:
+        with open(image_path, "rb") as f:
+            raw = f.read()
+        # Guess mime by extension; keep simple for v1
+        ext = os.path.splitext(image_path)[1].lower()
+        mime = "image/jpeg" if ext in {".jpg", ".jpeg"} else (
+            "image/png" if ext == ".png" else (
+                "image/webp" if ext == ".webp" else (
+                    "image/gif" if ext == ".gif" else "application/octet-stream"
+                )
+            )
+        )
+        b64 = base64.b64encode(raw).decode("ascii")
+        return f"data:{mime};base64,{b64}"
+    except Exception:
+        log.exception("_file_to_data_url failed for %s", image_path)
+        return None
+
+
+def _pdf_to_images(pdf_path: str, max_pages: int = 3, scale: float = 2.0) -> List[str]:
+    """Render first N pages of a PDF to temporary PNG images; return file paths.
+    Requires pypdfium2 and Pillow. Returns [] on failure.
+    """
+    try:
+        import pypdfium2 as pdfium  # type: ignore
+    except Exception:
+        log.warning("pypdfium2 not installed; cannot rasterize PDFs")
+        return []
+
+    from tempfile import mkdtemp
+    from pathlib import Path
+
+    out_dir = Path(mkdtemp(prefix="pdfimgs_"))
+    paths: List[str] = []
+    try:
+        pdf = pdfium.PdfDocument(pdf_path)
+        count = min(int(pdf.page_count), int(max_pages))
+        for i in range(count):
+            page = pdf[i]
+            bitmap = page.render(scale=scale)
+            pil_image = bitmap.to_pil()  # requires Pillow
+            out_path = out_dir / f"page_{i+1}.png"
+            pil_image.save(str(out_path), format="PNG")
+            paths.append(str(out_path))
+        return paths
+    except Exception:
+        log.exception("PDF rasterization failed for %s", pdf_path)
+        return []
+
+
+def propose_bom_from_vision(file_paths: List[str], spec: dict) -> dict:
+    """
+    Build a strict JSON BOM from images/PDFs using a vision-capable model.
+    Returns {"lines": [...], "notes": str} or {} on failure.
+    """
+    client = _make_client()
+    if not client:
+        return {}
+
+    # Prepare content blocks
+    content: List[Dict[str, Any]] = [
+        {"type": "text", "text": (
+            "Extract a building bill of materials (BOM) mapped to the provided allowed keys. "
+            "Return ONLY JSON with keys 'lines' and 'notes'. Units must be one of: m3, m, kg, bag, sheet, pcs, gal, lb."
+        )}
+    ]
+
+    # Expand PDFs into images
+    expanded_images: List[str] = []
+    for p in (file_paths or []):
+        ext = os.path.splitext(p)[1].lower()
+        if ext == ".pdf":
+            expanded_images.extend(_pdf_to_images(p, max_pages=3))
+        else:
+            expanded_images.append(p)
+
+    # Convert images to data URLs
+    for img_path in expanded_images:
+        data_url = _file_to_data_url(img_path)
+        if not data_url:
+            continue
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": data_url}
+        })
+
+    system = (
+        "You are a building-materials estimator for Trinidad & Tobago.\n"
+        "Return ONLY a JSON object with keys 'lines' and 'notes'.\n"
+        "'lines' items must use ONLY allowed inventory keys I provide and valid units.\n"
+        "If the project is a slab/driveway/pad, include reinforcement (mesh_A142_sheet or rebar_corr_3_8_m)."
+    )
+
+    user_prefix = (
+        f"Parsed spec (optional): {json.dumps(spec, ensure_ascii=False)}\n\n"
+        f"Allowed keys ONLY: {ALLOWED_KEYS}\n\n"
+        "Respond as pure JSON. Example shape: {\n"
+        "  \"lines\": [\n"
+        "    {\"key\":\"sharp_sand_m3\",\"qty\":2.4,\"unit\":\"m3\"},\n"
+        "    {\"key\":\"gravel_m3\",\"qty\":4.8,\"unit\":\"m3\"},\n"
+        "    {\"key\":\"cement_bag\",\"qty\":18,\"unit\":\"bag\"}\n"
+        "  ],\n"
+        "  \"notes\":\"Short rationale and assumptions.\"\n"
+        "}"
+    )
+
+    try:
+        resp = _chat_completion_with_fallback(
+            client,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": [
+                    {"type": "text", "text": user_prefix},
+                    *content  # text + images
+                ]},
+            ],
+            timeout=60.0,
+            model_kind="vision",
+        )
+        content_text = (resp.choices[0].message.content or "").strip()
+        data = json.loads(content_text)
+        cleaned = _validate_lines(data.get("lines"))
+        return {"lines": cleaned, "notes": data.get("notes", "")}
+    except Exception as e:
+        log.exception("propose_bom_from_vision failed: %s", e)
+        return {}

@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}Materials Extractor{% endblock %}
+
+{% block content %}
+<section class="container" style="max-width: 900px; margin: 1.5rem auto;">
+  <h1>Materials Extractor</h1>
+  <p>Upload images or PDFs. We'll extract a Bill of Materials and price what you stock.</p>
+
+  <form id="uform" enctype="multipart/form-data" onsubmit="return false;" style="margin: 1rem 0;">
+    <input id="files" type="file" name="file" multiple accept="image/*,application/pdf">
+    <button id="btnUpload" type="button">Upload</button>
+    <button id="btnAnalyze" type="button" disabled>Analyze</button>
+  </form>
+
+  <div id="uploaded" style="display:none; margin: 1rem 0;"></div>
+
+  <div id="results" style="display:none;">
+    <h2>Estimate</h2>
+    <table id="bom" class="table">
+      <thead>
+        <tr><th>Item</th><th>Qty</th><th>Unit</th><th>Unit Price</th><th>Total</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <div id="total" style="font-weight: bold; margin-top: .5rem;"></div>
+    <div id="notes" style="margin-top: .5rem;"></div>
+    <div id="assistant" style="white-space: pre-wrap; margin-top: 1rem;"></div>
+  </div>
+</section>
+{% endblock %}
+
+{% block page_scripts %}
+<script>
+let uploaded = [];
+
+function showUploads() {
+  const box = document.getElementById('uploaded');
+  if (!uploaded.length) {
+    box.style.display = 'none';
+    box.innerHTML = '';
+    return;
+  }
+  box.style.display = 'block';
+  box.innerHTML = uploaded.map(f => `<div><a href="${f.url}" target="_blank">${f.filename}</a></div>`).join('');
+}
+
+async function doUpload() {
+  const input = document.getElementById('files');
+  if (!input.files.length) {
+    alert('Select one or more files.');
+    return;
+  }
+  const fd = new FormData();
+  for (const f of input.files) fd.append('file', f);
+  const resp = await fetch('/api/uploads', { method: 'POST', body: fd, cache: 'no-store' });
+  const data = await resp.json().catch(() => null);
+  if (!data || data.ok === false) {
+    alert('Upload failed: ' + (data && data.error ? data.error : 'unknown'));
+    return;
+  }
+  uploaded = data.files || [];
+  document.getElementById('btnAnalyze').disabled = uploaded.length === 0;
+  showUploads();
+}
+
+async function doAnalyze() {
+  if (!uploaded.length) return;
+  const file_ids = uploaded.map(f => f.id);
+  const resp = await fetch('/api/bom/extract', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file_ids })
+  });
+  const data = await resp.json().catch(() => null);
+  if (!data || data.ok === false) {
+    alert('Analyze failed: ' + (data && data.error ? data.error : 'unknown'));
+    return;
+  }
+  const results = document.getElementById('results');
+  const bomTbody = document.querySelector('#bom tbody');
+  const totalDiv = document.getElementById('total');
+  const notesDiv = document.getElementById('notes');
+  const assistantDiv = document.getElementById('assistant');
+
+  results.style.display = 'block';
+  bomTbody.innerHTML = '';
+  (data.estimate.lines || []).forEach((l) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${l.name}</td>
+      <td>${Number(l.qty).toFixed(2)}</td>
+      <td>${l.unit}</td>
+      <td>${Number(l.unit_price || 0).toFixed(2)}</td>
+      <td>${Number(l.total || 0).toFixed(2)}</td>
+    `;
+    bomTbody.appendChild(tr);
+  });
+  totalDiv.textContent = 'Total: ' + Number(data.estimate.total || 0).toFixed(2);
+  notesDiv.textContent = data.ai_notes ? ('Notes: ' + data.ai_notes) : '';
+  assistantDiv.textContent = data.assistant || '';
+}
+
+document.getElementById('btnUpload').addEventListener('click', doUpload);
+document.getElementById('btnAnalyze').addEventListener('click', doAnalyze);
+</script>
+{% endblock %}
+
+

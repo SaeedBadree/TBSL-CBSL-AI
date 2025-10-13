@@ -16,6 +16,7 @@
             <!-- Navigation Links -->
             <div class="nav-links">
                 <a href="{{ url_for('buildadvisor') }}" class="{% if request.endpoint == 'buildadvisor' %}active{% endif %}">BuildAdvisor</a>
+                <a href="{{ url_for('upload_page') }}" class="{% if request.endpoint == 'upload_page' %}active{% endif %}">Materials Extractor</a>
                 <a href="{{ url_for('index') }}" class="{% if request.endpoint == 'index' %}active{% endif %}">Home</a>
                 <a href="{{ url_for('products') }}" class="{% if request.endpoint == 'products' %}active{% endif %}">Products</a>
                 {% if current_user.is_authenticated %}

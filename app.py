@@ -5,6 +5,7 @@ import json
 import time as _time
 import logging
 import traceback
+import threading
 from datetime import datetime, timedelta
 from functools import wraps
 from urllib.parse import urlparse, urljoin
@@ -257,6 +258,38 @@ class Expense(db.Model):
 @login_manager.user_loader
 def load_user(user_id):
     return User.query.get(int(user_id))
+
+# --------------------------
+# DB initialization helpers
+# --------------------------
+_DB_INIT_DONE = False
+_DB_INIT_LOCK = threading.Lock()
+
+def _ensure_db_initialized() -> None:
+    global _DB_INIT_DONE
+    if _DB_INIT_DONE:
+        return
+    with _DB_INIT_LOCK:
+        if _DB_INIT_DONE:
+            return
+        try:
+            with app.app_context():
+                db.create_all()
+                # Best-effort: add missing 'is_staff' column for existing SQLite user tables
+                from sqlalchemy import text
+                cols = db.session.execute(text("PRAGMA table_info(user); ")).fetchall()
+                col_names = {c[1] for c in cols} if cols else set()
+                if "is_staff" not in col_names and app.config["SQLALCHEMY_DATABASE_URI"].startswith("sqlite"):
+                    db.session.execute(text("ALTER TABLE user ADD COLUMN is_staff BOOLEAN NOT NULL DEFAULT 0;"))
+                    db.session.commit()
+            _DB_INIT_DONE = True
+        except Exception:
+            # Log but don't block requests; failures will surface on use
+            log.exception("DB init failed during _ensure_db_initialized")
+
+@app.before_request
+def _before_request_db_init():
+    _ensure_db_initialized()
 
 # --------------------------
 # BuildAdvisor imports (defensive)

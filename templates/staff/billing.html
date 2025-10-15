@@ -50,6 +50,14 @@
   <aside class="card" style="padding:12px;">
     <h3>Current Bill</h3>
     <label>Customer (optional) <input id="customer_name" type="text"/></label>
+    <label>Phone (optional) <input id="customer_phone" type="tel" inputmode="tel"/></label>
+    <label>Delivery address (Google verified)
+      <input id="customer_address" type="text" placeholder="Start typing your address…" autocomplete="off" spellcheck="false"/>
+      <small id="billing_addr_status" class="muted">Not verified</small>
+    </label>
+    <input type="hidden" id="cust_lat" value="">
+    <input type="hidden" id="cust_lng" value="">
+    <div id="billing-map" style="height:180px;border:1px solid #213055;border-radius:10px;margin:6px 0 8px;"></div>
     <div id="bill-lines"></div>
     <div style="margin-top:8px;"><strong>Subtotal:</strong> $<span id="bill-subtotal">0.00</span></div>
     <button id="btn-save-receipt" class="btn" style="margin-top:12px;">Save & Print</button>
@@ -59,6 +67,40 @@
 
 {% block page_scripts %}
 <script src="/static/staff_billing.js?v={{ ts }}"></script>
+<script>
+  const BILL_CENTER = {{ {
+    'lat': (BASE_LAT if BASE_LAT is defined else 10.5),
+    'lng': (BASE_LNG if BASE_LNG is defined else -61.3)
+  } | tojson }};
+
+  window.initBillingPlaces = function(){
+    const input  = document.getElementById('customer_address');
+    const status = document.getElementById('billing_addr_status');
+    if (!input || !(window.google && google.maps && google.maps.places)){
+      if (status) status.textContent = 'Not verified';
+      return;
+    }
+    const ac = new google.maps.places.Autocomplete(input, { fields: ['place_id','formatted_address','geometry'] });
+    const mapEl = document.getElementById('billing-map');
+    let map, marker;
+    if (mapEl){
+      map   = new google.maps.Map(mapEl, { center: BILL_CENTER, zoom: 10, mapTypeControl:false });
+      marker= new google.maps.Marker({ map, position: BILL_CENTER });
+    }
+    ac.addListener('place_changed', ()=>{
+      const place = ac.getPlace();
+      const loc   = place?.geometry?.location;
+      if (!place || !loc){ if (status) status.textContent = 'Not verified'; return; }
+      const lat = loc.lat(); const lng = loc.lng();
+      document.getElementById('cust_lat').value = lat;
+      document.getElementById('cust_lng').value = lng;
+      input.value = place.formatted_address || input.value;
+      if (status) status.textContent = 'Verified ✓';
+      if (map && marker){ marker.setPosition({lat,lng}); map.setCenter({lat,lng}); map.setZoom(14); }
+    });
+  };
+</script>
+<script defer src="https://maps.googleapis.com/maps/api/js?key={{ GOOGLE_MAPS_API_KEY }}&libraries=places&callback=initBillingPlaces"></script>
 {% endblock %}
 
 

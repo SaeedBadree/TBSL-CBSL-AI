@@ -127,6 +127,10 @@ OPENAI_API_KEY           = os.getenv("OPENAI_API_KEY", "")
 WIPAY_API_KEY            = os.getenv("WIPAY_API_KEY", "")
 GOOGLE_MAPS_BROWSER_KEY  = os.getenv("GOOGLE_MAPS_BROWSER_KEY", "")
 GOOGLE_MAPS_SERVER_KEY   = os.getenv("GOOGLE_MAPS_SERVER_KEY", "")
+WHATSAPP_TOKEN           = os.getenv("WHATSAPP_TOKEN", "")
+WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
+WHATSAPP_DISPATCH_NUMBER = os.getenv("WHATSAPP_DISPATCH_NUMBER", "")
+WHATSAPP_VERIFY_TOKEN    = os.getenv("WHATSAPP_VERIFY_TOKEN", "")
 
 def _f(v, default):
     try:
@@ -223,6 +227,10 @@ class SalesReceipt(db.Model):
     id            = db.Column(db.Integer, primary_key=True)
     receipt_no    = db.Column(db.String(50), nullable=True)
     customer_name = db.Column(db.String(200), nullable=True)
+    customer_phone = db.Column(db.String(50), nullable=True)
+    customer_address = db.Column(db.String(400), nullable=True)
+    customer_lat  = db.Column(db.Float, nullable=True)
+    customer_lng  = db.Column(db.Float, nullable=True)
     created_by    = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=True)
     created_at    = db.Column(db.DateTime, default=datetime.utcnow)
     subtotal      = db.Column(db.Float, nullable=True)
@@ -281,6 +289,19 @@ def _ensure_db_initialized() -> None:
                 col_names = {c[1] for c in cols} if cols else set()
                 if "is_staff" not in col_names and app.config["SQLALCHEMY_DATABASE_URI"].startswith("sqlite"):
                     db.session.execute(text("ALTER TABLE user ADD COLUMN is_staff BOOLEAN NOT NULL DEFAULT 0;"))
+                    db.session.commit()
+                # Add new SalesReceipt columns if missing (SQLite only)
+                cols_r = db.session.execute(text("PRAGMA table_info(sales_receipt); ")).fetchall()
+                r_names = {c[1] for c in cols_r} if cols_r else set()
+                if app.config["SQLALCHEMY_DATABASE_URI"].startswith("sqlite"):
+                    if "customer_phone" not in r_names:
+                        db.session.execute(text("ALTER TABLE sales_receipt ADD COLUMN customer_phone VARCHAR(50);"))
+                    if "customer_address" not in r_names:
+                        db.session.execute(text("ALTER TABLE sales_receipt ADD COLUMN customer_address VARCHAR(400);"))
+                    if "customer_lat" not in r_names:
+                        db.session.execute(text("ALTER TABLE sales_receipt ADD COLUMN customer_lat FLOAT;"))
+                    if "customer_lng" not in r_names:
+                        db.session.execute(text("ALTER TABLE sales_receipt ADD COLUMN customer_lng FLOAT;"))
                     db.session.commit()
             _DB_INIT_DONE = True
         except Exception:
@@ -440,6 +461,29 @@ def add_no_cache_headers(resp):
         resp.headers["Pragma"] = "no-cache"
         resp.headers["Expires"] = "0"
     return resp
+
+# --------------------------
+# WhatsApp Webhook (optional)
+# --------------------------
+
+@app.route("/webhooks/whatsapp", methods=["GET", "POST"])
+def whatsapp_webhook():
+    # GET: verification
+    if request.method == "GET":
+        mode = request.args.get("hub.mode")
+        token = request.args.get("hub.verify_token")
+        challenge = request.args.get("hub.challenge")
+        if mode in ("subscribe", "subscription") and token and token == (WHATSAPP_VERIFY_TOKEN or ""):
+            return (challenge or ""), 200
+        return ("Forbidden", 403)
+
+    # POST: messages/status updates
+    try:
+        data = request.get_json(silent=True) or {}
+        log.info("WA webhook: %s", json.dumps(data)[:1000])
+    except Exception:
+        pass
+    return jsonify({"ok": True}), 200
 
 # --------------------------
 # Staff auth helper
@@ -744,6 +788,21 @@ def delivery_quote():
 
     fee = round(DELIVERY_BASE_FEE + DELIVERY_PER_KM * km, 2)
     return jsonify({"ok": True, "distance_km": round(km, 2), "fee": fee})
+
+# --------------------------
+# Simple server-side geocoder
+# --------------------------
+@app.post("/api/maps/geocode")
+@staff_required
+def api_maps_geocode():
+    data = request.get_json(silent=True) or {}
+    address = (data.get("address") or "").strip()
+    if not address:
+        return jsonify({"ok": False, "error": "address is required"}), 400
+    lat, lng, formatted = geocode_address(address)
+    if lat is None or lng is None:
+        return jsonify({"ok": False, "error": "geocoding failed"}), 502
+    return jsonify({"ok": True, "lat": lat, "lng": lng, "formatted_address": formatted or address})
 
 # --------------------------
 # Core site routes
@@ -1842,6 +1901,199 @@ def me_location():
 # --------------------------
 # Staff Sales (Billing) APIs
 # --------------------------
+def geocode_address(address: str) -> tuple[float | None, float | None, str | None]:
+    """Return (lat, lng, formatted_address) for a textual address; None values on failure."""
+    addr = (address or "").strip()
+    if not addr or not GOOGLE_MAPS_SERVER_KEY:
+        return None, None, None
+    try:
+        resp = requests.get(
+            "https://maps.googleapis.com/maps/api/geocode/json",
+            params={"address": addr, "key": GOOGLE_MAPS_SERVER_KEY},
+            timeout=15
+        )
+        if resp.status_code != 200:
+            return None, None, None
+        data = resp.json() or {}
+        results = data.get("results") or []
+        if not results:
+            return None, None, None
+        loc = results[0]["geometry"]["location"]
+        formatted = results[0].get("formatted_address") or addr
+        return float(loc.get("lat")), float(loc.get("lng")), formatted
+    except Exception:
+        return None, None, None
+
+
+def _wa_headers() -> dict:
+    return {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
+
+def send_whatsapp_order(receipt: "SalesReceipt", lat: float | None, lng: float | None) -> None:
+    """Fire-and-forget sending of WhatsApp text and location to dispatcher.
+    Swallows errors to avoid blocking billing/printing.
+    """
+    if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID and WHATSAPP_DISPATCH_NUMBER):
+        return
+
+    def _run():
+        try:
+            # Build items summary
+            lines = SalesReceiptLine.query.filter_by(receipt_id=receipt.id).all()
+            items_txt = ", ".join([f"{li.item_name} x {li.quantity} {li.unit}" for li in lines])
+            # Build maps link (no origin)
+            maps_link = None
+            addr = (receipt.customer_address or "").strip() or None
+            if lat is not None and lng is not None:
+                from urllib.parse import quote
+                maps_link = f"https://www.google.com/maps/search/?api=1&query={quote(str(lat)+','+str(lng))}"
+            elif addr:
+                from urllib.parse import quote
+                maps_link = f"https://www.google.com/maps/search/?api=1&query={quote(addr)}"
+
+            phone_line = ("Phone: " + receipt.customer_phone) if (receipt.customer_phone or "").strip() else ""
+            addr_line = ("Address: " + (addr or "")) if addr else ""
+            body_lines = [
+                f"New order {receipt.receipt_no or receipt.id}",
+                f"Customer: {receipt.customer_name or 'N/A'}",
+            ]
+            if phone_line: body_lines.append(phone_line)
+            if addr_line: body_lines.append(addr_line)
+            if items_txt: body_lines.append(f"Items: {items_txt}")
+            body_lines.append(f"Total: ${float(receipt.total or 0):.2f}")
+            if maps_link: body_lines.append(f"Location: {maps_link}")
+            text_body = "\n".join([l for l in body_lines if l])
+
+            url = f"https://graph.facebook.com/v17.0/{WHATSAPP_PHONE_NUMBER_ID}/messages"
+            # Send text message first
+            try:
+                requests.post(url, headers=_wa_headers(), json={
+                    "messaging_product": "whatsapp",
+                    "recipient_type": "individual",
+                    "to": WHATSAPP_DISPATCH_NUMBER,
+                    "type": "text",
+                    "text": {"preview_url": True, "body": text_body}
+                }, timeout=20)
+            except Exception:
+                pass
+
+            # Send location message if we have coordinates
+            if lat is not None and lng is not None:
+                try:
+                    requests.post(url, headers=_wa_headers(), json={
+                        "messaging_product": "whatsapp",
+                        "to": WHATSAPP_DISPATCH_NUMBER,
+                        "type": "location",
+                        "location": {
+                            "latitude": lat,
+                            "longitude": lng,
+                            "name": "Delivery Location",
+                            "address": (addr or "")[:256]
+                        }
+                    }, timeout=20)
+                except Exception:
+                    pass
+        except Exception:
+            # ensure no crashes bubble up
+            pass
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def send_whatsapp_order_sync(receipt: "SalesReceipt", lat: float | None, lng: float | None) -> dict:
+    """Send WhatsApp TEXT synchronously (to report status), then send LOCATION in background.
+    Returns { sent_text: bool, sent_location_queued: bool, error?: str }.
+    """
+    result = {"sent_text": False, "sent_location_queued": False}
+    if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID and WHATSAPP_DISPATCH_NUMBER):
+        result["error"] = "Missing WhatsApp config"
+        return result
+
+    # Build text
+    try:
+        lines = SalesReceiptLine.query.filter_by(receipt_id=receipt.id).all()
+        items_txt = ", ".join([f"{li.item_name} x {li.quantity} {li.unit}" for li in lines])
+        addr = (receipt.customer_address or "").strip() or None
+        maps_link = None
+        if lat is not None and lng is not None:
+            from urllib.parse import quote
+            maps_link = f"https://www.google.com/maps/search/?api=1&query={quote(str(lat)+','+str(lng))}"
+        elif addr:
+            from urllib.parse import quote
+            maps_link = f"https://www.google.com/maps/search/?api=1&query={quote(addr)}"
+
+        phone_line = ("Phone: " + receipt.customer_phone) if (receipt.customer_phone or "").strip() else ""
+        addr_line = ("Address: " + (addr or "")) if addr else ""
+        body_lines = [
+            f"New order {receipt.receipt_no or receipt.id}",
+            f"Customer: {receipt.customer_name or 'N/A'}",
+        ]
+        if phone_line: body_lines.append(phone_line)
+        if addr_line: body_lines.append(addr_line)
+        if items_txt: body_lines.append(f"Items: {items_txt}")
+        body_lines.append(f"Total: ${float(receipt.total or 0):.2f}")
+        if maps_link: body_lines.append(f"Location: {maps_link}")
+        text_body = "\n".join([l for l in body_lines if l])
+
+        url = f"https://graph.facebook.com/v17.0/{WHATSAPP_PHONE_NUMBER_ID}/messages"
+        resp = requests.post(url, headers=_wa_headers(), json={
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": WHATSAPP_DISPATCH_NUMBER,
+            "type": "text",
+            "text": {"preview_url": True, "body": text_body}
+        }, timeout=15)
+        result["http_status"] = resp.status_code
+        try:
+            rj = resp.json()
+        except Exception:
+            rj = None
+        if resp.status_code // 100 == 2 and isinstance(rj, dict) and isinstance(rj.get("messages"), list):
+            result["sent_text"] = True
+            try:
+                result["message_id"] = rj["messages"][0].get("id")
+            except Exception:
+                pass
+        else:
+            # Extract error details if present
+            err_msg = None
+            if isinstance(rj, dict) and isinstance(rj.get("error"), dict):
+                e = rj["error"]
+                err_msg = f"{e.get('code')} {e.get('type')}: {e.get('message')}"
+            result["error"] = err_msg or (f"HTTP {resp.status_code}: {resp.text[:180]}")
+        # Log for debugging
+        try:
+            log.info("WA send response %s %s", resp.status_code, (rj or resp.text) if resp is not None else "")
+        except Exception:
+            pass
+    except Exception as ex:
+        result["error"] = str(ex)
+
+    # Queue location send
+    if lat is not None and lng is not None:
+        def _send_loc():
+            try:
+                url = f"https://graph.facebook.com/v17.0/{WHATSAPP_PHONE_NUMBER_ID}/messages"
+                requests.post(url, headers=_wa_headers(), json={
+                    "messaging_product": "whatsapp",
+                    "to": WHATSAPP_DISPATCH_NUMBER,
+                    "type": "location",
+                    "location": {
+                        "latitude": lat,
+                        "longitude": lng,
+                        "name": "Delivery Location",
+                        "address": ((receipt.customer_address or "")[:256])
+                    }
+                }, timeout=20)
+            except Exception:
+                pass
+        threading.Thread(target=_send_loc, daemon=True).start()
+        result["sent_location_queued"] = True
+
+    return result
 
 @app.post("/api/staff/receipts")
 @staff_required
@@ -1852,6 +2104,11 @@ def api_staff_create_receipt():
         return jsonify({"ok": False, "error": f"Invalid JSON: {ex}"}), 400
 
     customer_name = (body.get("customer_name") or "").strip() or None
+    customer_phone = (body.get("customer_phone") or "").strip() or None
+    customer_address = (body.get("customer_address") or "").strip() or None
+    # Optional client-provided coordinates
+    cust_lat_in = body.get("customer_lat")
+    cust_lng_in = body.get("customer_lng")
     lines = body.get("lines") or []
     notes = (body.get("notes") or "").strip() or None
     if not isinstance(lines, list) or not lines:
@@ -1859,6 +2116,8 @@ def api_staff_create_receipt():
 
     receipt = SalesReceipt(
         customer_name=customer_name,
+        customer_phone=customer_phone,
+        customer_address=customer_address,
         notes=notes,
         created_by=current_user.id if current_user.is_authenticated else None,
     )
@@ -1893,8 +2152,31 @@ def api_staff_create_receipt():
     receipt.total = receipt.subtotal
     # Simple receipt number
     receipt.receipt_no = f"R{receipt.id:06d}"
+    # Use client-provided coords if valid; otherwise geocode if we have an address
+    lat = lng = None
+    try:
+        lat = float(cust_lat_in) if cust_lat_in not in (None, "") else None
+        lng = float(cust_lng_in) if cust_lng_in not in (None, "") else None
+    except Exception:
+        lat = lng = None
+    if lat is not None and lng is not None:
+        receipt.customer_lat = lat
+        receipt.customer_lng = lng
+    elif customer_address:
+        g_lat, g_lng, formatted = geocode_address(customer_address)
+        if formatted:
+            receipt.customer_address = formatted
+        if g_lat is not None and g_lng is not None:
+            receipt.customer_lat = g_lat
+            receipt.customer_lng = g_lng
     db.session.commit()
-    return jsonify({"ok": True, "id": receipt.id, "receipt_no": receipt.receipt_no})
+    # Send WhatsApp synchronously for immediate UI feedback (location queued)
+    wa_result = {"sent_text": False, "sent_location_queued": False}
+    try:
+        wa_result = send_whatsapp_order_sync(receipt, receipt.customer_lat, receipt.customer_lng)
+    except Exception as ex:
+        wa_result = {"sent_text": False, "sent_location_queued": False, "error": str(ex)}
+    return jsonify({"ok": True, "id": receipt.id, "receipt_no": receipt.receipt_no, "wa": wa_result})
 
 
 @app.get("/staff/receipts/<int:rid>/print")

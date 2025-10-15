@@ -60,6 +60,10 @@
     if (!lines.length){ alert('Bill is empty'); return; }
     const payload = {
       customer_name: ($('#customer_name')?.value||'').trim() || null,
+      customer_phone: ($('#customer_phone')?.value||'').trim() || null,
+      customer_address: ($('#customer_address')?.value||'').trim() || null,
+      customer_lat: (document.getElementById('cust_lat')?.value||null),
+      customer_lng: (document.getElementById('cust_lng')?.value||null),
       notes: 'Aggregates',
       lines: lines.map(({item_name, unit, quantity, unit_price}) => ({ item_name, unit, quantity, unit_price }))
     };
@@ -68,6 +72,12 @@
     });
     const j = await r.json().catch(()=>({}));
     if (!r.ok || !j.ok){ alert(j.error||'Failed to save'); return; }
+    const wa = j.wa || {};
+    if (wa.sent_text){
+      alert('WhatsApp sent to dispatch' + (wa.sent_location_queued ? ' (location queued)' : ''));
+    }else{
+      alert('Saved. WhatsApp failed' + (wa.error ? `: ${wa.error}` : ''));
+    }
     clearStaffCart();
     window.open(`/staff/receipts/${j.id}/print`, '_blank');
   }

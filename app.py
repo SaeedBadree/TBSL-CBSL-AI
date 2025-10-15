@@ -819,6 +819,21 @@ def products():
 def upload_page():
     return render_template("upload.html")
 
+# --- Legal pages ---
+@app.route("/legal/privacy")
+def legal_privacy():
+    return render_template("legal/privacy.html")
+
+
+@app.route("/legal/terms")
+def legal_terms():
+    return render_template("legal/terms.html")
+
+
+@app.route("/legal/data-deletion")
+def legal_data_deletion():
+    return render_template("legal/data_deletion.html")
+
 # --------------------------
 # Staff pages (UI)
 # --------------------------

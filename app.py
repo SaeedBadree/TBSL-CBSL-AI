@@ -888,7 +888,8 @@ def staff_purchase_new():
 @app.get("/staff/billing")
 @staff_required
 def staff_billing():
-    return render_template("staff/billing.html")
+    latest = SalesReceipt.query.order_by(SalesReceipt.id.desc()).first()
+    return render_template("staff/billing.html", latest_receipt_id=(latest.id if latest else None))
 
 
 @app.get("/staff/reports/purchases")

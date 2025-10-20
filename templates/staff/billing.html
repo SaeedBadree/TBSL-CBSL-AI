@@ -61,6 +61,12 @@
     <div id="bill-lines"></div>
     <div style="margin-top:8px;"><strong>Subtotal:</strong> $<span id="bill-subtotal">0.00</span></div>
     <button id="btn-save-receipt" class="btn" style="margin-top:12px;">Save & Print</button>
+    {% if latest_receipt_id %}
+      <a class="btn secondary" style="margin-top:8px; display:inline-block;" href="{{ url_for('staff_print_receipt', rid=latest_receipt_id) }}" target="_blank" rel="noopener">Test Print (latest)</a>
+    {% else %}
+      <small class="muted" style="display:block; margin-top:8px;">No receipts yet. Save one to enable Test Print.</small>
+    {% endif %}
+    <small class="muted" style="display:block; margin-top:8px;">Printing guide: see docs/printing.md in the repo</small>
   </aside>
 </section>
 {% endblock %}

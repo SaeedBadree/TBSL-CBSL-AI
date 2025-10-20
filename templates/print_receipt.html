@@ -5,26 +5,30 @@
   <meta charset="utf-8"/>
   <title>Receipt {{ receipt.receipt_no }}</title>
   <style>
-    @page { size: 80mm auto; margin: 0; }
-    @media print { body { margin: 0; } }
-    body { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
-    .receipt { width: 72mm; margin: 0 auto; padding: 6mm 4mm; }
+    /* Screen defaults stay as-is; these rules only affect printing */
+    @media print {
+      @page { size: 80mm auto; margin: 0; }
+      html, body { width: 80mm; margin: 0; padding: 0; }
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+      .receipt { width: 72mm; margin: 0 auto; padding: 0; }
+      * { break-inside: avoid; }
+      html, body, .receipt { min-height: auto !important; height: auto !important; }
+    }
+
+    /* Basic receipt visuals (screen + print) */
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; color:#000; }
     .center { text-align: center; }
-    .row { display: flex; justify-content: space-between; }
+    .row { display: flex; justify-content: space-between; gap: 4px; }
     .muted { color: #444; }
-    hr { border: none; border-top: 1px dashed #444; margin: 8px 0; }
+    hr { border: none; border-top: 1px dashed #444; margin: 6px 0; }
     .totals .row { font-weight: 700; }
     .small { font-size: 12px; }
+    .section { margin: 6px 0; }
   </style>
-  <script>
-    function triggerPrint(){
-      setTimeout(() => { window.print(); }, 300);
-    }
-  </script>
   </head>
-<body onload="triggerPrint()">
+<body onload="window.print()">
   <div class="receipt">
-    <div class="center">
+    <div class="center section">
       <div><strong>Conserv Building Solutions</strong></div>
       <div class="small muted">Receipt {{ receipt.receipt_no }}</div>
       <div class="small muted">{{ (receipt.created_at.strftime('%Y-%m-%d %H:%M') if receipt.created_at) }}</div>
@@ -38,13 +42,13 @@
     {% endif %}
     <hr/>
     {% for li in lines %}
-      <div class="row">
-        <div class="small">{{ li.item_name }} x {{ '%.2f' % li.quantity }} {{ li.unit }}</div>
-        <div class="small">${{ '%.2f' % li.line_total }}</div>
+      <div class="row small">
+        <div>{{ li.item_name }} x {{ '%.2f' % li.quantity }} {{ li.unit }}</div>
+        <div>${{ '%.2f' % li.line_total }}</div>
       </div>
     {% endfor %}
     <hr/>
-    <div class="totals">
+    <div class="totals section">
       <div class="row small"><div>Subtotal</div><div>${{ '%.2f' % (receipt.subtotal or 0) }}</div></div>
       {% if (receipt.tax or 0) > 0 %}
       <div class="row small"><div>Tax</div><div>${{ '%.2f' % (receipt.tax or 0) }}</div></div>
@@ -52,8 +56,9 @@
       <div class="row small"><div>Total</div><div>${{ '%.2f' % (receipt.total or 0) }}</div></div>
     </div>
     <hr/>
-    <div class="center small muted">Thank you!</div>
+    <div class="center small muted section">Thank you!</div>
   </div>
+  <div style="page-break-after: always;"></div>
 </body>
 </html>
 
